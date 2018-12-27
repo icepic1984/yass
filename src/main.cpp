@@ -13,6 +13,42 @@
 #include <iostream>
 #include <vector>
 
+const bool enableValidationLayer = true;
+
+// clang-format off
+const std::vector<const char*> validationLayers{
+    "VK_LAYER_LUNARG_standard_validation",
+    "VK_LAYER_LUNARG_parameter_validation",
+    "VK_LAYER_LUNARG_object_tracker",
+    "VK_LAYER_LUNARG_core_validation"
+
+};
+// clang-format on
+VkResult CreateDebugUtilsMessengerEXT(
+    VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkDebugUtilsMessengerEXT* pCallback)
+{
+    auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
+        instance, "vkCreateDebugUtilsMessengerEXT");
+    if (func != nullptr) {
+        return func(instance, pCreateInfo, pAllocator, pCallback);
+    } else {
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    }
+}
+
+static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+    VkDebugUtilsMessageTypeFlagsEXT messageType,
+    const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
+{
+
+    std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
+
+    return VK_FALSE;
+}
+
 std::vector<const char*> getRequiredExtensionsForGlfw()
 {
     uint32_t extensionCount = 0;
@@ -23,10 +59,33 @@ std::vector<const char*> getRequiredExtensionsForGlfw()
             "Could not retrieve list of required vk extensions");
     }
     std::vector<const char*> result(extensionCount);
-    for (uint32_t i = 0; i < extensionCount; ++i) {
-        result[i] = extensions[i];
-    }
+    std::copy(extensions, extensions + extensionCount, result.begin());
+    if (enableValidationLayer)
+        result.push_back("VK_EXT_debug_utils");
     return result;
+}
+
+bool checkValidationLayer()
+{
+    auto layerProperties = vk::enumerateInstanceLayerProperties();
+    bool available = false;
+
+    for (auto& iter : layerProperties) {
+        std::cout << iter.layerName << std::endl;
+    }
+    for (const auto& validationLayer : validationLayers) {
+        auto found = std::find_if(
+            layerProperties.begin(), layerProperties.end(),
+            [&validationLayer](const vk::LayerProperties& layer) {
+                if (std::strcmp(validationLayer, layer.layerName) == 0)
+                    return true;
+                return false;
+            });
+
+        if (found == layerProperties.end())
+            return false;
+    }
+    return true;
 }
 
 std::vector<vk::ExtensionProperties> filterExtensions(
@@ -38,7 +97,7 @@ std::vector<vk::ExtensionProperties> filterExtensions(
         availableExtensions.begin(), availableExtensions.end(),
         std::back_inserter(result),
         [&requiredExtensionNames](const vk::ExtensionProperties& extension) {
-            for (auto& iter : requiredExtensionNames)
+            for (const auto& iter : requiredExtensionNames)
                 if (std::strcmp(iter, extension.extensionName) == 0)
                     return true;
             return false;
@@ -51,7 +110,7 @@ bool meetExtensionRequirements(
     const std::vector<const char*>& requiredExtensionNames)
 {
     auto result = filterExtensions(availableExtensions, requiredExtensionNames);
-    return !result.empty();
+    return result.size() == requiredExtensionNames.size();
 }
 
 void initVulkan()
@@ -80,15 +139,14 @@ int main()
     auto availableExtensions = vk::enumerateInstanceExtensionProperties();
     auto requiredExtensions = getRequiredExtensionsForGlfw();
 
-    auto filteredExtensions =
-        filterExtensions(availableExtensions, requiredExtensions);
-
-    for (auto iter : filteredExtensions) {
-        std::cout << "Iter: " << iter.extensionName << " " << iter.specVersion
-                  << std::endl;
-    }
     if (meetExtensionRequirements(availableExtensions, requiredExtensions)) {
+        std::cout << "Create vulkan instance" << std::endl;
+        // Setup ApplicationInfo info struct which provide the driver with
+        // information about the application
         vk::ApplicationInfo appInfo{"Test"};
+
+        // Setup InstanceCreateInfo struct which is used to configure
+        // the vulkan instance.
         vk::InstanceCreateInfo createInfo{
             vk::InstanceCreateFlags(),
             &appInfo,
@@ -97,7 +155,39 @@ int main()
             static_cast<uint32_t>(requiredExtensions.size()),
             requiredExtensions.data()};
 
-        auto instance = vk::createInstance(createInfo);
+        if (checkValidationLayer() && enableValidationLayer) {
+            createInfo.setEnabledLayerCount(
+                static_cast<uint32_t>(validationLayers.size()));
+            createInfo.setPpEnabledLayerNames(validationLayers.data());
+        }
+
+        // Create vulkan instance
+        auto instance = vk::createInstanceUnique(createInfo);
+        std::cout << "Done creating vulkan instance" << std::endl;
+
+        // Create debug callback
+        vk::DebugUtilsMessengerCreateInfoEXT debugInfo(
+            vk::DebugUtilsMessengerCreateFlagsEXT(),
+            vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
+                vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+                vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
+            vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
+                vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
+                vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral,
+            &debugCallback, nullptr);
+        
+        
+        vk::DispatchLoaderDynamic dldi(instance.get());
+        auto debugCallback = instance->createDebugUtilsMessengerEXT(debugInfo,nullptr,dldi);
+
+
+            auto devices = instance->enumeratePhysicalDevices();
+        for (auto& iter : devices) {
+            auto properties = iter.getProperties();
+
+            std::cout << "Api Version" << properties.apiVersion
+                      << " Device name: " << properties.deviceName << std::endl;
+        }
     }
 
     std::cout << "Glfw extensions" << std::endl;
