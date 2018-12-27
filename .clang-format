@@ -1,0 +1,29 @@
+Language: Cpp
+
+# Indent 4 columns
+IndentWidth: 4
+TabWidth: 4
+
+# Use spaces instead of tabs
+UseTab: Never
+
+# Don't indent case labels
+IndentCaseLabels: false
+
+# Algin pointer to the left
+PointerAlignment: Left
+
+# Disable namespace indention
+NamespaceIndentation: None
+
+# Unindent access modifier
+AccessModifierOffset: -4
+
+# Brace behaviour
+BreakBeforeBraces: WebKit
+
+SpaceBeforeParens: ControlStatements
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+AllowShortFunctionsOnASingleLine: false
