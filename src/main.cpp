@@ -113,6 +113,54 @@ bool meetExtensionRequirements(
     return result.size() == requiredExtensionNames.size();
 }
 
+bool isDeviceSuitable(const vk::PhysicalDevice& device)
+{
+    auto properties = device.getProperties();
+    auto features = device.getFeatures();
+    // Test if device is a dedicated graphic card and supports a
+    // geometry shader.
+    return properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu &&
+           features.geometryShader;
+}
+
+vk::PhysicalDevice pickDevice(const vk::UniqueInstance& instance)
+{
+    // Pick first device which meets the requirements (aka is a
+    // dedicated graphic card and has a geometry shader)
+    auto devices = instance->enumeratePhysicalDevices();
+    for (const auto& iter : instance->enumeratePhysicalDevices()) {
+        if (isDeviceSuitable(iter))
+            return iter;
+    }
+    throw std::runtime_error(
+        "No graphic cards with vulkan support found on system.");
+    return vk::PhysicalDevice();
+}
+
+void printQueueProperties(const vk::PhysicalDevice& device)
+{
+    std::cout << "Queue properties of: " << device.getProperties().deviceName
+              << std::endl;
+
+    auto queues = device.getQueueFamilyProperties();
+    for (const auto& iter : queues) {
+        std::cout << "Properties ("
+                  << static_cast<unsigned int>(iter.queueFlags)
+                  << "): Queue count = " << iter.queueCount << " Familie = ";
+        if (iter.queueFlags & vk::QueueFlagBits::eProtected)
+            std::cout << "Protected ";
+        if (iter.queueFlags & vk::QueueFlagBits::eGraphics)
+            std::cout << "Graphic ";
+        if (iter.queueFlags & vk::QueueFlagBits::eTransfer)
+            std::cout << "Transfer ";
+        if (iter.queueFlags & vk::QueueFlagBits::eCompute)
+            std::cout << "Compute ";
+        if (iter.queueFlags & vk::QueueFlagBits::eSparseBinding)
+            std::cout << "SparseBinding ";
+        std::cout << std::endl;
+    }
+}
+
 void initVulkan()
 {
     auto instanceExtensionsProperties =
@@ -175,23 +223,22 @@ int main()
                 vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
                 vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral,
             &debugCallback, nullptr);
-        
-        
+
+        // Initialize dynamic dispatch
         vk::DispatchLoaderDynamic dldi(instance.get());
-        auto debugCallback = instance->createDebugUtilsMessengerEXT(debugInfo,nullptr,dldi);
+        // Register debug callback for layer validation
+        auto debugCallback = instance->createDebugUtilsMessengerEXTUnique(
+            debugInfo, nullptr, dldi);
 
-
-            auto devices = instance->enumeratePhysicalDevices();
-        for (auto& iter : devices) {
-            auto properties = iter.getProperties();
-
-            std::cout << "Api Version" << properties.apiVersion
-                      << " Device name: " << properties.deviceName << std::endl;
-        }
+        auto device = pickDevice(instance);
+        auto queues = device.getQueueFamilyProperties();
+        printQueueProperties(device);
+        
     }
 
     std::cout << "Glfw extensions" << std::endl;
-    initVulkan();
+
+    //  initVulkan();
     // uint32_t extensionCount = 0;
 
     // auto result = vk::enumerateInstanceLayerProperties();
