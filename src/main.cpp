@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
+#include <optional>
 #include <vector>
 
 const bool enableValidationLayer = true;
@@ -24,19 +25,6 @@ const std::vector<const char*> validationLayers{
 
 };
 // clang-format on
-VkResult CreateDebugUtilsMessengerEXT(
-    VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
-    const VkAllocationCallbacks* pAllocator,
-    VkDebugUtilsMessengerEXT* pCallback)
-{
-    auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
-        instance, "vkCreateDebugUtilsMessengerEXT");
-    if (func != nullptr) {
-        return func(instance, pCreateInfo, pAllocator, pCallback);
-    } else {
-        return VK_ERROR_EXTENSION_NOT_PRESENT;
-    }
-}
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -161,23 +149,76 @@ void printQueueProperties(const vk::PhysicalDevice& device)
     }
 }
 
-void initVulkan()
+std::optional<uint32_t> findQueueFamilies(const vk::PhysicalDevice& device)
 {
-    auto instanceExtensionsProperties =
-        vk::enumerateInstanceExtensionProperties();
-    vk::ApplicationInfo appInfo{"Test"};
-    vk::InstanceCreateInfo createInfo;
 
-    for (auto& iter : instanceExtensionsProperties) {
-        std::cout << "Specversion: " << iter.specVersion << " "
-                  << iter.extensionName << std::endl;
+    auto queues = device.getQueueFamilyProperties();
+    for (std::size_t i = 0; i < queues.size(); ++i) {
+        if (queues[i].queueFlags & vk::QueueFlagBits::eGraphics)
+            return static_cast<uint32_t>(i);
+    }
+    return std::nullopt;
+}
+
+vk::UniqueInstance
+createInstance(const std::vector<const char*>& requiredExtensions)
+{
+    vk::ApplicationInfo appInfo{"Test"};
+
+    // Setup InstanceCreateInfo struct which is used to configure
+    // the vulkan instance.
+    vk::InstanceCreateInfo createInfo{
+        vk::InstanceCreateFlags(),
+        &appInfo,
+        0,
+        nullptr,
+        static_cast<uint32_t>(requiredExtensions.size()),
+        requiredExtensions.data()};
+
+    if (checkValidationLayer() && enableValidationLayer) {
+        createInfo.setEnabledLayerCount(
+            static_cast<uint32_t>(validationLayers.size()));
+        createInfo.setPpEnabledLayerNames(validationLayers.data());
     }
 
-    // createInfo.
+    // Create vulkan instance
+    return vk::createInstanceUnique(createInfo);
+}
 
-    // vk::createInstance(const InstanceCreateInfo &createInfo,
-    // Optional<const AllocationCallbacks> allocator = nullptr, const
-    // Dispatch &d = Dispatch())
+vk::UniqueDevice createDevice(const vk::PhysicalDevice& physicalDevice,
+                              uint32_t queueIndex)
+{
+    // Create device from physical device with one queue.
+    float priority = 1.0f;
+    vk::DeviceQueueCreateInfo deviceQueueCreateInfo(
+        vk::DeviceQueueCreateFlags(), queueIndex, 1, &priority);
+    vk::DeviceCreateInfo deviceCreateInfo(vk::DeviceCreateFlags(), 1,
+                                          &deviceQueueCreateInfo);
+    if (checkValidationLayer() && enableValidationLayer) {
+        deviceCreateInfo.setEnabledLayerCount(
+            static_cast<uint32_t>(validationLayers.size()));
+        deviceCreateInfo.setPpEnabledLayerNames(validationLayers.data());
+    }
+    return physicalDevice.createDeviceUnique(deviceCreateInfo);
+}
+
+auto createDebugMessenger(const vk::UniqueInstance& instance)
+{
+    vk::DebugUtilsMessengerCreateInfoEXT debugInfo(
+        vk::DebugUtilsMessengerCreateFlagsEXT(),
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
+            vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+            vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
+        vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
+            vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
+            vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral,
+        &debugCallback, nullptr);
+
+    // Initialize dynamic dispatch
+    vk::DispatchLoaderDynamic dldi(instance.get());
+    // Register debug callback for layer validation
+    return instance->createDebugUtilsMessengerEXTUnique(debugInfo, nullptr,
+                                                        dldi);
 }
 
 int main()
@@ -188,52 +229,13 @@ int main()
     auto requiredExtensions = getRequiredExtensionsForGlfw();
 
     if (meetExtensionRequirements(availableExtensions, requiredExtensions)) {
-        std::cout << "Create vulkan instance" << std::endl;
-        // Setup ApplicationInfo info struct which provide the driver with
-        // information about the application
-        vk::ApplicationInfo appInfo{"Test"};
-
-        // Setup InstanceCreateInfo struct which is used to configure
-        // the vulkan instance.
-        vk::InstanceCreateInfo createInfo{
-            vk::InstanceCreateFlags(),
-            &appInfo,
-            0,
-            nullptr,
-            static_cast<uint32_t>(requiredExtensions.size()),
-            requiredExtensions.data()};
-
-        if (checkValidationLayer() && enableValidationLayer) {
-            createInfo.setEnabledLayerCount(
-                static_cast<uint32_t>(validationLayers.size()));
-            createInfo.setPpEnabledLayerNames(validationLayers.data());
-        }
-
         // Create vulkan instance
-        auto instance = vk::createInstanceUnique(createInfo);
-        std::cout << "Done creating vulkan instance" << std::endl;
-
-        // Create debug callback
-        vk::DebugUtilsMessengerCreateInfoEXT debugInfo(
-            vk::DebugUtilsMessengerCreateFlagsEXT(),
-            vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
-                vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-                vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
-            vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
-                vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
-                vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral,
-            &debugCallback, nullptr);
-
-        // Initialize dynamic dispatch
-        vk::DispatchLoaderDynamic dldi(instance.get());
-        // Register debug callback for layer validation
-        auto debugCallback = instance->createDebugUtilsMessengerEXTUnique(
-            debugInfo, nullptr, dldi);
-
-        auto device = pickDevice(instance);
-        auto queues = device.getQueueFamilyProperties();
-        printQueueProperties(device);
-        
+        auto instance = createInstance(requiredExtensions);
+        auto messanger = createDebugMessenger(instance);
+        auto physicalDevice = pickDevice(instance);
+        auto queueIndex = findQueueFamilies(physicalDevice);
+        printQueueProperties(physicalDevice);
+        auto device = createDevice(physicalDevice, *queueIndex);
     }
 
     std::cout << "Glfw extensions" << std::endl;
