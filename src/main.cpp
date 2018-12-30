@@ -1,12 +1,13 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <glfw.hpp>
 #include <vulkan/vulkan.hpp>
 
-#define GLM_FORCE_RADIANS
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#include <glm/mat4x4.hpp>
-#include <glm/vec4.hpp>
+// #define GLM_FORCE_RADIANS
+// #define GLM_FORCE_DEPTH_ZERO_TO_ONE
+// #include <glm/mat4x4.hpp>
+// #include <glm/vec4.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -25,6 +26,20 @@ const std::vector<const char*> validationLayers{
 
 };
 // clang-format on
+
+VkResult CreateDebugUtilsMessengerEXT(
+    VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkDebugUtilsMessengerEXT* pCallback)
+{
+    auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
+        instance, "vkCreateDebugUtilsMessengerEXT");
+    if (func != nullptr) {
+        return func(instance, pCreateInfo, pAllocator, pCallback);
+    } else {
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    }
+}
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -58,9 +73,6 @@ bool checkValidationLayer()
     auto layerProperties = vk::enumerateInstanceLayerProperties();
     bool available = false;
 
-    for (auto& iter : layerProperties) {
-        std::cout << iter.layerName << std::endl;
-    }
     for (const auto& validationLayer : validationLayers) {
         auto found = std::find_if(
             layerProperties.begin(), layerProperties.end(),
@@ -117,6 +129,7 @@ vk::PhysicalDevice pickDevice(const vk::UniqueInstance& instance)
     // dedicated graphic card and has a geometry shader)
     auto devices = instance->enumeratePhysicalDevices();
     for (const auto& iter : instance->enumeratePhysicalDevices()) {
+        std::cout << "Devive " << std::endl;
         if (isDeviceSuitable(iter))
             return iter;
     }
@@ -202,7 +215,8 @@ vk::UniqueDevice createDevice(const vk::PhysicalDevice& physicalDevice,
     return physicalDevice.createDeviceUnique(deviceCreateInfo);
 }
 
-auto createDebugMessenger(const vk::UniqueInstance& instance)
+auto createDebugMessenger(const vk::UniqueInstance& instance,
+                          const vk::DispatchLoaderDynamic& dldi)
 {
     vk::DebugUtilsMessengerCreateInfoEXT debugInfo(
         vk::DebugUtilsMessengerCreateFlagsEXT(),
@@ -215,7 +229,6 @@ auto createDebugMessenger(const vk::UniqueInstance& instance)
         &debugCallback, nullptr);
 
     // Initialize dynamic dispatch
-    vk::DispatchLoaderDynamic dldi(instance.get());
     // Register debug callback for layer validation
     return instance->createDebugUtilsMessengerEXTUnique(debugInfo, nullptr,
                                                         dldi);
@@ -230,13 +243,19 @@ int main()
 
     if (meetExtensionRequirements(availableExtensions, requiredExtensions)) {
         // Create vulkan instance
+        std::cout << "Create Instance" << std::endl;
         auto instance = createInstance(requiredExtensions);
-        auto messanger = createDebugMessenger(instance);
+        vk::DispatchLoaderDynamic dldi(instance.get());
+        std::cout << "Create DebugMessagenger" << std::endl;
+        auto messanger = createDebugMessenger(instance,dldi);
+        std::cout << "Pick physical device" << std::endl;
         auto physicalDevice = pickDevice(instance);
         auto queueIndex = findQueueFamilies(physicalDevice);
-        printQueueProperties(physicalDevice);
+        std::cout << "Device " << std::endl;
+        // printQueueProperties(physicalDevice);
         auto device = createDevice(physicalDevice, *queueIndex);
     }
+
 
     std::cout << "Glfw extensions" << std::endl;
 
@@ -248,10 +267,11 @@ int main()
 
     // glfwInit();
 
-    // glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-    // GLFWwindow* window =
-    //     glfwCreateWindow(800, 600, "Vulkan window", nullptr, nullptr);
+    GLFWwindow* window =
+        glfwCreateWindow(800, 600, "Vulkan window", nullptr, nullptr);
+    glfw::UniqueWindow window
 
     // vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount,
     // nullptr);

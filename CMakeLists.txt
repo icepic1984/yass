@@ -6,6 +6,9 @@ set(CMAKE_CXX_STANDARD 17)
 find_package(Vulkan REQUIRED)
 find_package(glfw3 REQUIRED)
 
+add_subdirectory(glfw++)
+
 add_executable(yass src/main.cpp)
 
-target_link_libraries(yass Vulkan::Vulkan glfw)
+target_link_libraries(yass glfw++ glfw Vulkan::Vulkan)
+
