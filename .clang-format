@@ -27,3 +27,6 @@ SpacesInParentheses: false
 SpacesInSquareBrackets: false
 
 AllowShortFunctionsOnASingleLine: false
+
+SortIncludes: false
+IncludeBlocks: Preserve
