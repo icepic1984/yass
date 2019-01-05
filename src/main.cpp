@@ -235,7 +235,7 @@ vk::PresentModeKHR chooseSwapPresentMode(
     return bestMode;
 }
 
-void printSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities)
+void printSurfaceCapabilities(const vk::SurfaceCapabilitiesKHR& capabilities)
 {
     std::cout << "Width: " << capabilities.currentExtent.width << std::endl;
     std::cout << "Height: " << capabilities.currentExtent.height << std::endl;
@@ -247,6 +247,8 @@ void printSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities)
               << std::endl;
     std::cout << "Max height : " << capabilities.maxImageExtent.height
               << std::endl;
+    std::cout << "Min Image count: " << capabilities.minImageCount << std::endl;
+    std::cout << "Max Image count: " << capabilities.maxImageCount << std::endl;
 }
 
 vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities,
@@ -267,6 +269,33 @@ vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities,
 
         return actualExtent;
     }
+}
+
+vk::UniqueSwapchainKHR
+createSwapChain(const vk::UniqueDevice& device,
+                const vk::UniqueSurfaceKHR& surface, const vk::Extent2D& extent,
+                const vk::PresentModeKHR& presentMode,
+                const vk::SurfaceFormatKHR& surfaceFormat)
+{
+    // For tripple buffering
+    const uint32_t imageCount = 3;
+    vk::SwapchainCreateInfoKHR info;
+    info.setSurface(surface.get());
+    info.setMinImageCount(imageCount);
+    info.setImageFormat(surfaceFormat.format);
+    info.setImageExtent(extent);
+    info.setImageColorSpace(surfaceFormat.colorSpace);
+    info.setImageArrayLayers(1);
+    info.setImageUsage(vk::ImageUsageFlagBits::eColorAttachment);
+    // Graphic and presentation are on same queue therefore choose exclusive
+    info.setImageSharingMode(vk::SharingMode::eExclusive);
+    info.setPreTransform(vk::SurfaceTransformFlagBitsKHR::eIdentity);
+    info.setCompositeAlpha(vk::CompositeAlphaFlagBitsKHR::eOpaque);
+    info.setPresentMode(presentMode);
+    info.setClipped(true);
+    info.setOldSwapchain(nullptr);
+
+    return device->createSwapchainKHRUnique(info);
 }
 
 std::optional<uint32_t> findQueueFamilies(const vk::PhysicalDevice& device)
@@ -375,11 +404,13 @@ int main()
         auto surfaceFormat =
             chooseSwapSurfaceFormat(swapChainCapabilities.formats);
 
-        auto presentationMode =
+        auto presentMode =
             chooseSwapPresentMode(swapChainCapabilities.presentModes);
 
         auto extend =
             chooseSwapExtent(swapChainCapabilities.capabilities, 800, 600);
+
+        printSurfaceCapabilities(swapChainCapabilities.capabilities);
         auto queueFamilyIndex = findQueueFamilies(physicalDevice);
 
         if (!queueFamilyIndex.has_value()) {
@@ -392,9 +423,10 @@ int main()
             throw std::runtime_error("Queue does not support presentation");
         }
 
-        std::cout << "Device " << std::endl;
-
         auto device = createDevice(physicalDevice, *queueFamilyIndex);
+
+        auto swapChain = createSwapChain(device, surface, extend, presentMode,
+                                         surfaceFormat);
         auto queue = device->getQueue(*queueFamilyIndex, 0);
     }
 
