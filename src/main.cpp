@@ -2,6 +2,7 @@
 #include <vulkan/vulkan.hpp>
 #include <glfw.hpp>
 #include <GLFW/glfw3.h>
+#include <fstream>
 
 // #define GLM_FORCE_RADIANS
 // #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -398,6 +399,18 @@ createImageViewsFromSwapChain(const vk::UniqueDevice& device,
         views.push_back(device->createImageViewUnique(info));
     }
     return views;
+}
+
+std::vector<char> readShader(const std::string& str)
+{
+    std::ifstream file(str, std::ios::ate | std::ios::binary);
+    if (!file.is_open())
+        throw std::runtime_error("File not found");
+    auto pos = file.tellg();
+    std::vector<char> result(pos);
+    file.seekg(0, std::ios::beg);
+    file.read(result.data(), pos);
+    return result;
 }
 
 int main()
