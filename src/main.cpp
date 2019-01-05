@@ -29,19 +29,11 @@ const std::vector<const char*> validationLayers{
 const std::vector<const char*> deviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
-VkResult CreateDebugUtilsMessengerEXT(
-    VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
-    const VkAllocationCallbacks* pAllocator,
-    VkDebugUtilsMessengerEXT* pCallback)
-{
-    auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
-        instance, "vkCreateDebugUtilsMessengerEXT");
-    if (func != nullptr) {
-        return func(instance, pCreateInfo, pAllocator, pCallback);
-    } else {
-        return VK_ERROR_EXTENSION_NOT_PRESENT;
-    }
-}
+struct SwapChainSupportDetails {
+    vk::SurfaceCapabilitiesKHR capabilities;
+    std::vector<vk::SurfaceFormatKHR> formats;
+    std::vector<vk::PresentModeKHR> presentModes;
+};
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -52,6 +44,20 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
 
     return VK_FALSE;
+}
+
+SwapChainSupportDetails
+querySwapChainSupport(const vk::PhysicalDevice& physicalDevice,
+                      const vk::UniqueSurfaceKHR& surface)
+{
+    SwapChainSupportDetails result;
+    result.capabilities =
+        physicalDevice.getSurfaceCapabilitiesKHR(surface.get());
+    result.formats = physicalDevice.getSurfaceFormatsKHR(surface.get());
+    result.presentModes =
+        physicalDevice.getSurfacePresentModesKHR(surface.get());
+
+    return result;
 }
 
 std::vector<const char*> getRequiredExtensionsForGlfw()
@@ -180,6 +186,89 @@ void printQueueProperties(const vk::PhysicalDevice& device)
     }
 }
 
+void printSurfaceFormats(const vk::SurfaceFormatKHR& format)
+{
+    switch (format.format) {
+    case vk::Format::eUndefined:
+        std::cout << "Undefined" << std::endl;
+        break;
+    case vk::Format::eB8G8R8A8Unorm:
+        std::cout << "eB8G8R8A8Unorm" << std::endl;
+        break;
+    default:
+        std::cout << "Unkown" << std::endl;
+        break;
+    }
+}
+
+vk::SurfaceFormatKHR chooseSwapSurfaceFormat(
+    const std::vector<vk::SurfaceFormatKHR>& availableFormats)
+{
+    if (availableFormats.size() == 1 &&
+        availableFormats[0].format == vk::Format::eUndefined) {
+        return {vk::Format::eB8G8R8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear};
+    }
+
+    for (const auto& availableFormat : availableFormats) {
+        if (availableFormat.format == vk::Format::eB8G8R8A8Unorm &&
+            availableFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear) {
+            return availableFormat;
+        }
+    }
+
+    throw std::runtime_error("No swap format found");
+    return availableFormats[0];
+}
+
+vk::PresentModeKHR chooseSwapPresentMode(
+    const std::vector<vk::PresentModeKHR> availablePresentModes)
+{
+    vk::PresentModeKHR bestMode = vk::PresentModeKHR::eFifo;
+
+    for (const auto& availablePresentMode : availablePresentModes) {
+        if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
+            return availablePresentMode;
+        } else if (availablePresentMode == vk::PresentModeKHR::eImmediate) {
+            bestMode = availablePresentMode;
+        }
+    }
+    return bestMode;
+}
+
+void printSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities)
+{
+    std::cout << "Width: " << capabilities.currentExtent.width << std::endl;
+    std::cout << "Height: " << capabilities.currentExtent.height << std::endl;
+    std::cout << "Min width : " << capabilities.minImageExtent.width
+              << std::endl;
+    std::cout << "Min height : " << capabilities.minImageExtent.height
+              << std::endl;
+    std::cout << "Max width : " << capabilities.maxImageExtent.width
+              << std::endl;
+    std::cout << "Max height : " << capabilities.maxImageExtent.height
+              << std::endl;
+}
+
+vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities,
+                              uint32_t width, uint32_t height)
+{
+    if (capabilities.currentExtent.width !=
+        std::numeric_limits<uint32_t>::max()) {
+        return capabilities.currentExtent;
+    } else {
+        vk::Extent2D actualExtent = {width, height};
+
+        actualExtent.width = std::max(
+            capabilities.minImageExtent.width,
+            std::min(capabilities.maxImageExtent.width, actualExtent.width));
+        actualExtent.height = std::max(
+            capabilities.minImageExtent.height,
+            std::min(capabilities.maxImageExtent.height, actualExtent.height));
+
+        return actualExtent;
+    }
+}
+
 std::optional<uint32_t> findQueueFamilies(const vk::PhysicalDevice& device)
 {
 
@@ -230,6 +319,9 @@ vk::UniqueDevice createDevice(const vk::PhysicalDevice& physicalDevice,
             static_cast<uint32_t>(validationLayers.size()));
         deviceCreateInfo.setPpEnabledLayerNames(validationLayers.data());
     }
+    deviceCreateInfo.setEnabledExtensionCount(
+        static_cast<uint32_t>(deviceExtensions.size()));
+    deviceCreateInfo.setPpEnabledExtensionNames(deviceExtensions.data());
     return physicalDevice.createDeviceUnique(deviceCreateInfo);
 }
 
@@ -270,13 +362,29 @@ int main()
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         auto window = glfw::createWindow(800, 600, "test");
         auto surface = window.createWindowSurface(instance);
+
         auto physicalDevice = pickDevice(instance);
+        auto swapChainCapabilities =
+            querySwapChainSupport(physicalDevice, surface);
+
+        if (swapChainCapabilities.formats.empty() ||
+            swapChainCapabilities.presentModes.empty()) {
+            throw std::runtime_error("Swap chain requirements not meet");
+        }
+
+        auto surfaceFormat =
+            chooseSwapSurfaceFormat(swapChainCapabilities.formats);
+
+        auto presentationMode =
+            chooseSwapPresentMode(swapChainCapabilities.presentModes);
+
+        auto extend =
+            chooseSwapExtent(swapChainCapabilities.capabilities, 800, 600);
         auto queueFamilyIndex = findQueueFamilies(physicalDevice);
 
         if (!queueFamilyIndex.has_value()) {
             throw std::runtime_error("No suitable queue family found");
         }
-        // printQueueProperties(physicalDevice);
 
         // Test if queue of device supports presentation
         if (!physicalDevice.getSurfaceSupportKHR(*queueFamilyIndex,
