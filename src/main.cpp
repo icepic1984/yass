@@ -373,6 +373,33 @@ auto createDebugMessenger(const vk::UniqueInstance& instance,
                                                         dldi);
 }
 
+std::vector<vk::UniqueImageView>
+createImageViewsFromSwapChain(const vk::UniqueDevice& device,
+                              const std::vector<vk::Image>& swapChainImages,
+                              const vk::SurfaceFormatKHR& format)
+{
+    std::vector<vk::UniqueImageView> views;
+    for (const auto& iter : swapChainImages) {
+        vk::ImageViewCreateInfo info;
+        info.setImage(iter);
+        info.setViewType(vk::ImageViewType::e2D);
+        info.setFormat(format.format);
+        vk::ComponentMapping components(vk::ComponentSwizzle::eIdentity,
+                                        vk::ComponentSwizzle::eIdentity,
+                                        vk::ComponentSwizzle::eIdentity);
+        info.setComponents(components);
+        vk::ImageSubresourceRange range;
+        range.setAspectMask(vk::ImageAspectFlagBits::eColor);
+        range.setBaseMipLevel(0);
+        range.setLevelCount(1);
+        range.setBaseArrayLayer(0);
+        range.setLayerCount(1);
+        info.setSubresourceRange(range);
+        views.push_back(device->createImageViewUnique(info));
+    }
+    return views;
+}
+
 int main()
 {
     glfwInit();
@@ -427,6 +454,10 @@ int main()
 
         auto swapChain = createSwapChain(device, surface, extend, presentMode,
                                          surfaceFormat);
+
+        auto swapChainImages = device->getSwapchainImagesKHR(swapChain.get());
+        auto swapChainImageViews = createImageViewsFromSwapChain(
+            device, swapChainImages, surfaceFormat);
         auto queue = device->getQueue(*queueFamilyIndex, 0);
     }
 
