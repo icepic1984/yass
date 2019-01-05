@@ -128,7 +128,6 @@ vk::PhysicalDevice pickDevice(const vk::UniqueInstance& instance)
     // dedicated graphic card and has a geometry shader)
     auto devices = instance->enumeratePhysicalDevices();
     for (const auto& iter : instance->enumeratePhysicalDevices()) {
-        std::cout << "Devive " << std::endl;
         if (isDeviceSuitable(iter))
             return iter;
     }
@@ -198,12 +197,12 @@ createInstance(const std::vector<const char*>& requiredExtensions)
 }
 
 vk::UniqueDevice createDevice(const vk::PhysicalDevice& physicalDevice,
-                              uint32_t queueIndex)
+                              uint32_t queueFamilyIndex)
 {
     // Create device from physical device with one queue.
     float priority = 1.0f;
     vk::DeviceQueueCreateInfo deviceQueueCreateInfo(
-        vk::DeviceQueueCreateFlags(), queueIndex, 1, &priority);
+        vk::DeviceQueueCreateFlags(), queueFamilyIndex, 1, &priority);
     vk::DeviceCreateInfo deviceCreateInfo(vk::DeviceCreateFlags(), 1,
                                           &deviceQueueCreateInfo);
     if (checkValidationLayer() && enableValidationLayer) {
@@ -250,14 +249,25 @@ int main()
         std::cout << "Create window" << std::endl;
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         auto window = glfw::createWindow(800, 600, "test");
-        {
-            auto surface = window.createWindowSurface(instance);
-        }
+        auto surface = window.createWindowSurface(instance);
         auto physicalDevice = pickDevice(instance);
-        auto queueIndex = findQueueFamilies(physicalDevice);
-        std::cout << "Device " << std::endl;
+        auto queueFamilyIndex = findQueueFamilies(physicalDevice);
+
+        if (!queueFamilyIndex.has_value()) {
+            throw std::runtime_error("No suitable queue family found");
+        }
         // printQueueProperties(physicalDevice);
-        auto device = createDevice(physicalDevice, *queueIndex);
+
+        // Test if queue of device supports presentation
+        if (!physicalDevice.getSurfaceSupportKHR(*queueFamilyIndex,
+                                                 surface.get())) {
+            throw std::runtime_error("Queue does not support presentation");
+        }
+
+        std::cout << "Device " << std::endl;
+
+        auto device = createDevice(physicalDevice, *queueFamilyIndex);
+        auto queue = device->getQueue(*queueFamilyIndex, 0);
     }
 
     std::cout << "Glfw extensions" << std::endl;
