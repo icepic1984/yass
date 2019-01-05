@@ -1,9 +1,7 @@
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-
+#include <vulkan/vulkan.h>
 #include <vulkan/vulkan.hpp>
 #include <glfw.hpp>
-
+#include <GLFW/glfw3.h>
 
 // #define GLM_FORCE_RADIANS
 // #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -252,21 +250,14 @@ int main()
         std::cout << "Create window" << std::endl;
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         auto window = glfw::createWindow(800, 600, "test");
-        std::cout << "Create surface" << std::endl;
         {
             auto surface = window.createWindowSurface(instance);
-            instance->destroy(surface);
-            
-            
-            //surf
         }
-        std::cout << "Pick physical device" << std::endl;
         auto physicalDevice = pickDevice(instance);
         auto queueIndex = findQueueFamilies(physicalDevice);
         std::cout << "Device " << std::endl;
         // printQueueProperties(physicalDevice);
         auto device = createDevice(physicalDevice, *queueIndex);
-
     }
 
     std::cout << "Glfw extensions" << std::endl;

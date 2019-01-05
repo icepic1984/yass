@@ -8,7 +8,7 @@ find_package(glfw3 REQUIRED)
 
 add_subdirectory(glfw++)
 
-add_executable(yass src/main.cpp src/glfw.cpp)
+add_executable(yass src/main.cpp)
 
 target_link_libraries(yass glfw++ glfw Vulkan::Vulkan)
 
