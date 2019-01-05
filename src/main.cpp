@@ -26,6 +26,9 @@ const std::vector<const char*> validationLayers{
 };
 // clang-format on
 
+const std::vector<const char*> deviceExtensions = {
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+
 VkResult CreateDebugUtilsMessengerEXT(
     VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
     const VkAllocationCallbacks* pAllocator,
@@ -112,6 +115,23 @@ bool meetExtensionRequirements(
     return result.size() == requiredExtensionNames.size();
 }
 
+bool checkDeviceExtensionSupport(const vk::PhysicalDevice& physicalDevice)
+{
+    auto extensions = physicalDevice.enumerateDeviceExtensionProperties();
+    std::vector<vk::ExtensionProperties> result;
+
+    std::copy_if(extensions.begin(), extensions.end(),
+                 std::back_inserter(result),
+                 [](const vk::ExtensionProperties& property) {
+                     for (const auto& iter : deviceExtensions) {
+                         if (strcmp(property.extensionName, iter) == 0)
+                             return true;
+                     }
+                     return false;
+                 });
+    return result.size() == deviceExtensions.size();
+}
+
 bool isDeviceSuitable(const vk::PhysicalDevice& device)
 {
     auto properties = device.getProperties();
@@ -119,7 +139,7 @@ bool isDeviceSuitable(const vk::PhysicalDevice& device)
     // Test if device is a dedicated graphic card and supports a
     // geometry shader.
     return properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu &&
-           features.geometryShader;
+           features.geometryShader && checkDeviceExtensionSupport(device);
 }
 
 vk::PhysicalDevice pickDevice(const vk::UniqueInstance& instance)
