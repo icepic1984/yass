@@ -413,6 +413,14 @@ std::vector<char> readShader(const std::string& str)
     return result;
 }
 
+vk::UniqueShaderModule createShaderModule(const vk::UniqueDevice& device,
+                                          const std::vector<char>& code)
+{
+    vk::ShaderModuleCreateInfo info;
+    info.setCodeSize(code.size());
+    info.setPCode(reinterpret_cast<const uint32_t*>(code.data()));
+    return device->createShaderModuleUnique(info);
+}
 int main()
 {
     glfwInit();
@@ -472,6 +480,9 @@ int main()
         auto swapChainImageViews = createImageViewsFromSwapChain(
             device, swapChainImages, surfaceFormat);
         auto queue = device->getQueue(*queueFamilyIndex, 0);
+
+        auto vertShader = createShaderModule(device, readShader("vert.spv"));
+        auto fragShader = createShaderModule(device, readShader("frag.spv"));
     }
 
     std::cout << "Glfw extensions" << std::endl;

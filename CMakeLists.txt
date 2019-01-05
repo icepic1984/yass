@@ -10,5 +10,10 @@ add_subdirectory(glfw++)
 
 add_executable(yass src/main.cpp)
 
+# Build shader
+add_custom_command(TARGET yass POST_BUILD
+    COMMAND glslangValidator -V ${CMAKE_CURRENT_LIST_DIR}/src/shaders/shader.vert
+    COMMAND glslangValidator -V ${CMAKE_CURRENT_LIST_DIR}/src/shaders/shader.frag)
+    
 target_link_libraries(yass glfw++ glfw Vulkan::Vulkan)
 
