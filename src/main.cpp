@@ -455,7 +455,7 @@ int main()
         auto presentMode =
             chooseSwapPresentMode(swapChainCapabilities.presentModes);
 
-        auto extend =
+        auto extent =
             chooseSwapExtent(swapChainCapabilities.capabilities, 800, 600);
 
         printSurfaceCapabilities(swapChainCapabilities.capabilities);
@@ -473,7 +473,7 @@ int main()
 
         auto device = createDevice(physicalDevice, *queueFamilyIndex);
 
-        auto swapChain = createSwapChain(device, surface, extend, presentMode,
+        auto swapChain = createSwapChain(device, surface, extent, presentMode,
                                          surfaceFormat);
 
         auto swapChainImages = device->getSwapchainImagesKHR(swapChain.get());
@@ -483,6 +483,106 @@ int main()
 
         auto vertShader = createShaderModule(device, readShader("vert.spv"));
         auto fragShader = createShaderModule(device, readShader("frag.spv"));
+
+        vk::PipelineShaderStageCreateInfo vertStageInfo;
+        vertStageInfo.setStage(vk::ShaderStageFlagBits::eVertex);
+        vertStageInfo.setPName("main");
+        vertStageInfo.setModule(vertShader.get());
+
+        vk::PipelineShaderStageCreateInfo fragStageInfo;
+        fragStageInfo.setStage(vk::ShaderStageFlagBits::eFragment);
+        fragStageInfo.setPName("main");
+        fragStageInfo.setModule(fragShader.get());
+
+        std::vector<vk::PipelineShaderStageCreateInfo> stages;
+        stages.push_back(vertStageInfo);
+        stages.push_back(fragStageInfo);
+
+        vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
+        vertexInputInfo.setVertexBindingDescriptionCount(0);
+        vertexInputInfo.setPVertexBindingDescriptions(nullptr);
+        vertexInputInfo.setVertexAttributeDescriptionCount(0);
+        vertexInputInfo.setPVertexAttributeDescriptions(nullptr);
+
+        vk::PipelineInputAssemblyStateCreateInfo inputAssemblyInfo;
+        inputAssemblyInfo.setTopology(vk::PrimitiveTopology::eTriangleList);
+        inputAssemblyInfo.setPrimitiveRestartEnable(false);
+
+        vk::Viewport viewport;
+        viewport.setX(0.0f);
+        viewport.setY(0.0f);
+        viewport.setWidth(static_cast<float>(extent.width));
+        viewport.setHeight(static_cast<float>(extent.height));
+        viewport.setMinDepth(0.0f);
+        viewport.setMaxDepth(1.0f);
+
+        vk::Rect2D scissor;
+        scissor.setOffset({0, 0});
+        scissor.setExtent(extent);
+
+        vk::PipelineViewportStateCreateInfo viewPortStateInfo;
+        viewPortStateInfo.setViewportCount(1);
+        viewPortStateInfo.setPViewports(&viewport);
+        viewPortStateInfo.setScissorCount(1);
+        viewPortStateInfo.setPScissors(&scissor);
+
+        vk::PipelineRasterizationStateCreateInfo rasterizerInfo;
+        rasterizerInfo.setRasterizerDiscardEnable(false);
+        rasterizerInfo.setDepthClampEnable(false);
+        rasterizerInfo.setPolygonMode(vk::PolygonMode::eFill);
+        rasterizerInfo.setCullMode(vk::CullModeFlagBits::eBack);
+        rasterizerInfo.setFrontFace(vk::FrontFace::eClockwise);
+        rasterizerInfo.setLineWidth(1.0f);
+
+        vk::PipelineMultisampleStateCreateInfo multiSampleInfo;
+        vk::PipelineColorBlendAttachmentState colorBlendAttachment;
+        vk::PipelineColorBlendStateCreateInfo colorBlendInfo;
+        colorBlendInfo.setLogicOpEnable(false);
+        colorBlendInfo.setAttachmentCount(1);
+        colorBlendInfo.setPAttachments(&colorBlendAttachment);
+
+        vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+        auto pipelineLayout =
+            device->createPipelineLayoutUnique(pipelineLayoutInfo);
+
+        vk::AttachmentDescription colorAttachment;
+        colorAttachment.setFormat(surfaceFormat.format);
+        colorAttachment.setSamples(vk::SampleCountFlagBits::e1);
+        colorAttachment.setLoadOp(vk::AttachmentLoadOp::eClear);
+        colorAttachment.setStoreOp(vk::AttachmentStoreOp::eStore);
+        colorAttachment.setInitialLayout(vk::ImageLayout::eUndefined);
+        colorAttachment.setFinalLayout(vk::ImageLayout::ePresentSrcKHR);
+
+        vk::AttachmentReference colorAttachmentRef;
+        colorAttachmentRef.setLayout(vk::ImageLayout::eColorAttachmentOptimal);
+
+        vk::SubpassDescription subpass;
+        subpass.setPipelineBindPoint(vk::PipelineBindPoint::eGraphics);
+        subpass.setColorAttachmentCount(1);
+        subpass.setPColorAttachments(&colorAttachmentRef);
+
+        vk::RenderPassCreateInfo renderPassInfo;
+        renderPassInfo.setAttachmentCount(1);
+        renderPassInfo.setPAttachments(&colorAttachment);
+        renderPassInfo.setSubpassCount(1);
+        renderPassInfo.setPSubpasses(&subpass);
+        auto renderPass = device->createRenderPassUnique(renderPassInfo);
+
+        vk::GraphicsPipelineCreateInfo pipelineInfo;
+        pipelineInfo.setStageCount(2);
+        pipelineInfo.setPStages(stages.data());
+        pipelineInfo.setPVertexInputState(&vertexInputInfo);
+        pipelineInfo.setPInputAssemblyState(&inputAssemblyInfo);
+        pipelineInfo.setPViewportState(&viewPortStateInfo);
+        pipelineInfo.setPMultisampleState(&multiSampleInfo);
+        pipelineInfo.setPColorBlendState(&colorBlendInfo);
+        pipelineInfo.setPRasterizationState(&rasterizerInfo);
+        pipelineInfo.setLayout(pipelineLayout.get());
+        pipelineInfo.setRenderPass(renderPass.get());
+        pipelineInfo.setSubpass(0);
+
+        auto graphicsPipeline = device->createGraphicsPipelineUnique(
+            vk::PipelineCache{}, pipelineInfo);
     }
 
     std::cout << "Glfw extensions" << std::endl;
