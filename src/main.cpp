@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <iostream>
 #include <optional>
+#include <limits>
 #include <vector>
 
 const bool enableValidationLayer = true;
@@ -508,11 +509,25 @@ createPipeline(const vk::UniqueDevice& device, const vk::Extent2D& extent,
     subpass.setColorAttachmentCount(1);
     subpass.setPColorAttachments(&colorAttachmentRef);
 
+    vk::SubpassDependency dependency;
+    dependency.setSrcSubpass(VK_SUBPASS_EXTERNAL);
+    dependency.setDstSubpass(0);
+    dependency.setSrcStageMask(
+        vk::PipelineStageFlagBits::eColorAttachmentOutput);
+    dependency.setSrcStageMask(vk::PipelineStageFlags{});
+    dependency.setDstStageMask(
+        vk::PipelineStageFlagBits::eColorAttachmentOutput);
+    dependency.setDstAccessMask(vk::AccessFlagBits::eColorAttachmentRead |
+                                vk::AccessFlagBits::eColorAttachmentWrite);
+
     vk::RenderPassCreateInfo renderPassInfo;
     renderPassInfo.setAttachmentCount(1);
     renderPassInfo.setPAttachments(&colorAttachment);
     renderPassInfo.setSubpassCount(1);
     renderPassInfo.setPSubpasses(&subpass);
+    renderPassInfo.setDependencyCount(0);
+    renderPassInfo.setPDependencies(&dependency);
+
     auto renderPass = device->createRenderPassUnique(renderPassInfo);
 
     vk::GraphicsPipelineCreateInfo pipelineInfo;
@@ -609,6 +624,15 @@ std::vector<vk::CommandBuffer> createCommandBuffers(
     return commandBuffers;
 }
 
+std::pair<vk::UniqueSemaphore, vk::UniqueSemaphore>
+createSemaphores(const vk::UniqueDevice& device)
+{
+    vk::SemaphoreCreateInfo semaphoreCreateInfo;
+
+    return std::make_pair(device->createSemaphoreUnique(semaphoreCreateInfo),
+                          device->createSemaphoreUnique(semaphoreCreateInfo));
+}
+
 int main()
 {
     glfwInit();
@@ -693,6 +717,41 @@ int main()
         auto commandBuffers =
             createCommandBuffers(device, commandPool, graphicPipeline,
                                  renderPass, frameBuffers, extent);
+
+        auto [renderFinished, imageAvailable] = createSemaphores(device);
+
+        while (!glfwWindowShouldClose(window)) {
+            glfwPollEvents();
+            uint32_t index = 0;
+            device->acquireNextImageKHR(
+                swapChain.get(), std::numeric_limits<uint64_t>::max(),
+                imageAvailable.get(), vk::Fence{}, &index);
+
+            vk::SubmitInfo submitInfo;
+            vk::PipelineStageFlags waitStages[] = {
+                vk::PipelineStageFlagBits::eColorAttachmentOutput};
+            submitInfo.setWaitSemaphoreCount(1);
+            submitInfo.setPWaitSemaphores(&imageAvailable.get());
+            submitInfo.setPWaitDstStageMask(waitStages);
+            submitInfo.setCommandBufferCount(1);
+            submitInfo.setPCommandBuffers(&commandBuffers[index]);
+            submitInfo.setSignalSemaphoreCount(1);
+            submitInfo.setPSignalSemaphores(&renderFinished.get());
+            queue.submit(1, &submitInfo, vk::Fence{});
+
+            vk::PresentInfoKHR presentInfo;
+            presentInfo.setWaitSemaphoreCount(1);
+            presentInfo.setPWaitSemaphores(&renderFinished.get());
+            presentInfo.setSwapchainCount(1);
+            presentInfo.setPSwapchains(&swapChain.get());
+            presentInfo.setPImageIndices(&index);
+            queue.presentKHR(presentInfo);
+        }
+        //  std::cout << index. << std::endl;
+
+        // uint32_t imageIndex = device->acquireNextImageKHR(
+        //     swapChain.get(), std::numeric_limits<uint64_t>::max(),
+        //     imageAvailable, nullptr);
 
         // std::vector<vk::UniqueCommandBuffer> commandBuffers;
     }
