@@ -422,9 +422,9 @@ vk::UniqueShaderModule createShaderModule(const vk::UniqueDevice& device,
     return device->createShaderModuleUnique(info);
 }
 
-vk::UniquePipeline createPipeline(const vk::UniqueDevice& device,
-                                  const vk::Extent2D& extent,
-                                  const vk::SurfaceFormatKHR& surfaceFormat)
+std::pair<vk::UniqueRenderPass, vk::UniquePipeline>
+createPipeline(const vk::UniqueDevice& device, const vk::Extent2D& extent,
+               const vk::SurfaceFormatKHR& surfaceFormat)
 {
 
     auto vertShader = createShaderModule(device, readShader("vert.spv"));
@@ -527,8 +527,41 @@ vk::UniquePipeline createPipeline(const vk::UniqueDevice& device,
     pipelineInfo.setRenderPass(renderPass.get());
     pipelineInfo.setSubpass(0);
 
-    return device->createGraphicsPipelineUnique(vk::PipelineCache{},
-                                                pipelineInfo);
+    auto pipeline =
+        device->createGraphicsPipelineUnique(vk::PipelineCache{}, pipelineInfo);
+    return std::make_pair(std::move(renderPass), std::move(pipeline));
+}
+
+std::vector<vk::UniqueFramebuffer>
+createFrameBuffers(const vk::UniqueDevice& device,
+                   const vk::UniqueRenderPass& renderPass,
+                   const std::vector<vk::UniqueImageView>& swapChainImageViews,
+                   const vk::Extent2D& extent)
+{
+
+    std::vector<vk::UniqueFramebuffer> swapChainFramebuffers;
+
+    for (const auto& iter : swapChainImageViews) {
+        vk::FramebufferCreateInfo frameBufferInfo;
+        frameBufferInfo.setRenderPass(renderPass.get());
+        frameBufferInfo.setAttachmentCount(1);
+        frameBufferInfo.setPAttachments(&iter.get());
+        frameBufferInfo.setWidth(extent.width);
+        frameBufferInfo.setHeight(extent.height);
+        frameBufferInfo.setLayers(1);
+        swapChainFramebuffers.push_back(
+            device->createFramebufferUnique(frameBufferInfo));
+    }
+    return swapChainFramebuffers;
+}
+
+vk::UniqueCommandPool createCommandPool(const vk::UniqueDevice& device,
+                                        uint32_t index)
+{
+    vk::CommandPoolCreateInfo commandPoolInfo;
+    commandPoolInfo.setQueueFamilyIndex(index);
+    device->createCommandPoolUnique(commandPoolInfo);
+    return device->createCommandPoolUnique(commandPoolInfo);
 }
 
 int main()
@@ -542,15 +575,26 @@ int main()
         // Create vulkan instance
         std::cout << "Create Instance" << std::endl;
         auto instance = createInstance(requiredExtensions);
+
+        // Load debug messenger extension and register callbacks for
+        // layer validation
         vk::DispatchLoaderDynamic dldi(instance.get());
         std::cout << "Create DebugMessagenger" << std::endl;
         auto messanger = createDebugMessenger(instance, dldi);
+
+        // Create window using glfw
         std::cout << "Create window" << std::endl;
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         auto window = glfw::createWindow(800, 600, "test");
+
+        // Retrieve vulkan surface from windwo
         auto surface = window.createWindowSurface(instance);
 
+        // Use physical device
         auto physicalDevice = pickDevice(instance);
+
+        // Check if physical device has swap chain capabilities
+        // (i.e. presentation mode), which are needed for rendering.
         auto swapChainCapabilities =
             querySwapChainSupport(physicalDevice, surface);
 
@@ -581,8 +625,10 @@ int main()
             throw std::runtime_error("Queue does not support presentation");
         }
 
+        // Create device from physical device which was selected previously
         auto device = createDevice(physicalDevice, *queueFamilyIndex);
 
+        // Create swap chain from surface
         auto swapChain = createSwapChain(device, surface, extent, presentMode,
                                          surfaceFormat);
 
@@ -591,7 +637,13 @@ int main()
             device, swapChainImages, surfaceFormat);
         auto queue = device->getQueue(*queueFamilyIndex, 0);
 
-        auto pipeline = createPipeline(device, extent, surfaceFormat);
+        auto [renderPass, graphicPipeline] =
+            createPipeline(device, extent, surfaceFormat);
+
+        auto frameBuffers =
+            createFrameBuffers(device, renderPass, swapChainImageViews, extent);
+
+        auto commandPool = createCommandPool(device, *queueFamilyIndex);
     }
 
     std::cout << "Glfw extensions" << std::endl;
