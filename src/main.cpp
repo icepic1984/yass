@@ -9,6 +9,7 @@
 // #include <glm/mat4x4.hpp>
 // #include <glm/vec4.hpp>
 
+#include <array>
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
@@ -564,6 +565,50 @@ vk::UniqueCommandPool createCommandPool(const vk::UniqueDevice& device,
     return device->createCommandPoolUnique(commandPoolInfo);
 }
 
+std::vector<vk::CommandBuffer> createCommandBuffers(
+    const vk::UniqueDevice& device, const vk::UniqueCommandPool& commandPool,
+    const vk::UniquePipeline& pipeline, const vk::UniqueRenderPass& renderPass,
+    const std::vector<vk::UniqueFramebuffer>& swapChainFrameBuffers,
+    const vk::Extent2D& extent)
+{
+    // std::vector<vk::CommandBuffer>
+    // commandBuffers(swapChainFrameBuffers.size());
+
+    // Allocating command buffers (one for each swap image)
+    vk::CommandBufferAllocateInfo allocInfo;
+    allocInfo.setCommandPool(commandPool.get());
+    allocInfo.setLevel(vk::CommandBufferLevel::ePrimary);
+    allocInfo.setCommandBufferCount(
+        static_cast<uint32_t>(swapChainFrameBuffers.size()));
+
+    std::vector<vk::CommandBuffer> commandBuffers =
+        device->allocateCommandBuffers(allocInfo);
+
+    for (std::size_t i = 0; i < commandBuffers.size(); ++i) {
+
+        // Start recording of command buffer
+        vk::CommandBufferBeginInfo beginInfo;
+        beginInfo.setFlags(vk::CommandBufferUsageFlagBits::eSimultaneousUse);
+        commandBuffers[i].begin(beginInfo);
+
+        vk::RenderPassBeginInfo renderPassBeginInfo;
+        renderPassBeginInfo.setRenderPass(renderPass.get());
+        renderPassBeginInfo.setFramebuffer(swapChainFrameBuffers[i].get());
+        renderPassBeginInfo.setRenderArea(vk::Rect2D({0, 0}, extent));
+        vk::ClearValue clearColor(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f});
+        renderPassBeginInfo.setClearValueCount(1);
+        renderPassBeginInfo.setPClearValues(&clearColor);
+        commandBuffers[i].beginRenderPass(renderPassBeginInfo,
+                                          vk::SubpassContents::eInline);
+        commandBuffers[i].bindPipeline(vk::PipelineBindPoint::eGraphics,
+                                       pipeline.get());
+        commandBuffers[i].draw(3, 1, 0, 0);
+        commandBuffers[i].endRenderPass();
+        commandBuffers[i].end();
+    }
+    return commandBuffers;
+}
+
 int main()
 {
     glfwInit();
@@ -644,6 +689,12 @@ int main()
             createFrameBuffers(device, renderPass, swapChainImageViews, extent);
 
         auto commandPool = createCommandPool(device, *queueFamilyIndex);
+
+        auto commandBuffers =
+            createCommandBuffers(device, commandPool, graphicPipeline,
+                                 renderPass, frameBuffers, extent);
+
+        // std::vector<vk::UniqueCommandBuffer> commandBuffers;
     }
 
     std::cout << "Glfw extensions" << std::endl;
