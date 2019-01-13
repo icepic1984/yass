@@ -448,9 +448,9 @@ createPipeline(const vk::UniqueDevice& device, const vk::Extent2D& extent,
 
     vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
     vertexInputInfo.setVertexBindingDescriptionCount(0);
-    vertexInputInfo.setPVertexBindingDescriptions(nullptr);
+    // vertexInputInfo.setPVertexBindingDescriptions(nullptr);
     vertexInputInfo.setVertexAttributeDescriptionCount(0);
-    vertexInputInfo.setPVertexAttributeDescriptions(nullptr);
+    // vertexInputInfo.setPVertexAttributeDescriptions(nullptr);
 
     vk::PipelineInputAssemblyStateCreateInfo inputAssemblyInfo;
     inputAssemblyInfo.setTopology(vk::PrimitiveTopology::eTriangleList);
@@ -483,13 +483,26 @@ createPipeline(const vk::UniqueDevice& device, const vk::Extent2D& extent,
     rasterizerInfo.setLineWidth(1.0f);
 
     vk::PipelineMultisampleStateCreateInfo multiSampleInfo;
+    multiSampleInfo.setSampleShadingEnable(false);
+    multiSampleInfo.setRasterizationSamples(vk::SampleCountFlagBits::e1);
+
     vk::PipelineColorBlendAttachmentState colorBlendAttachment;
+    colorBlendAttachment.setColorWriteMask(
+        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+        vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
+    colorBlendAttachment.setBlendEnable(false);
+
     vk::PipelineColorBlendStateCreateInfo colorBlendInfo;
     colorBlendInfo.setLogicOpEnable(false);
+    colorBlendInfo.setLogicOp(vk::LogicOp::eCopy);
     colorBlendInfo.setAttachmentCount(1);
     colorBlendInfo.setPAttachments(&colorBlendAttachment);
+    colorBlendInfo.setBlendConstants({0.0f, 0.0f, 0.0f, 0.0f});
 
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+    pipelineLayoutInfo.setSetLayoutCount(0);
+    pipelineLayoutInfo.setPushConstantRangeCount(0);
+
     auto pipelineLayout =
         device->createPipelineLayoutUnique(pipelineLayoutInfo);
 
@@ -498,10 +511,13 @@ createPipeline(const vk::UniqueDevice& device, const vk::Extent2D& extent,
     colorAttachment.setSamples(vk::SampleCountFlagBits::e1);
     colorAttachment.setLoadOp(vk::AttachmentLoadOp::eClear);
     colorAttachment.setStoreOp(vk::AttachmentStoreOp::eStore);
+    colorAttachment.setStencilLoadOp(vk::AttachmentLoadOp::eDontCare);
+    colorAttachment.setStencilStoreOp(vk::AttachmentStoreOp::eDontCare);
     colorAttachment.setInitialLayout(vk::ImageLayout::eUndefined);
     colorAttachment.setFinalLayout(vk::ImageLayout::ePresentSrcKHR);
 
     vk::AttachmentReference colorAttachmentRef;
+    colorAttachmentRef.setAttachment(0);
     colorAttachmentRef.setLayout(vk::ImageLayout::eColorAttachmentOptimal);
 
     vk::SubpassDescription subpass;
@@ -514,7 +530,7 @@ createPipeline(const vk::UniqueDevice& device, const vk::Extent2D& extent,
     dependency.setDstSubpass(0);
     dependency.setSrcStageMask(
         vk::PipelineStageFlagBits::eColorAttachmentOutput);
-    dependency.setSrcStageMask(vk::PipelineStageFlags{});
+    dependency.setSrcAccessMask(vk::AccessFlags{});
     dependency.setDstStageMask(
         vk::PipelineStageFlagBits::eColorAttachmentOutput);
     dependency.setDstAccessMask(vk::AccessFlagBits::eColorAttachmentRead |
@@ -525,7 +541,7 @@ createPipeline(const vk::UniqueDevice& device, const vk::Extent2D& extent,
     renderPassInfo.setPAttachments(&colorAttachment);
     renderPassInfo.setSubpassCount(1);
     renderPassInfo.setPSubpasses(&subpass);
-    renderPassInfo.setDependencyCount(0);
+    renderPassInfo.setDependencyCount(1);
     renderPassInfo.setPDependencies(&dependency);
 
     auto renderPass = device->createRenderPassUnique(renderPassInfo);
@@ -542,6 +558,7 @@ createPipeline(const vk::UniqueDevice& device, const vk::Extent2D& extent,
     pipelineInfo.setLayout(pipelineLayout.get());
     pipelineInfo.setRenderPass(renderPass.get());
     pipelineInfo.setSubpass(0);
+    pipelineInfo.setBasePipelineHandle(vk::Pipeline{});
 
     auto pipeline =
         device->createGraphicsPipelineUnique(vk::PipelineCache{}, pipelineInfo);
