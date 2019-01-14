@@ -424,6 +424,33 @@ vk::UniqueShaderModule createShaderModule(const vk::UniqueDevice& device,
     return device->createShaderModuleUnique(info);
 }
 
+vk::UniqueDescriptorSetLayout
+createDescriptorSetLayout(const vk::UniqueDevice& device)
+{
+    vk::DescriptorSetLayoutBinding binding;
+    binding.setBinding(0);
+    binding.setDescriptorType(vk::DescriptorType::eUniformBuffer);
+    binding.setStageFlags(vk::ShaderStageFlagBits::eVertex);
+    binding.setDescriptorCount(1);
+    binding.setPImmutableSamplers(nullptr);
+
+    vk::DescriptorSetLayoutCreateInfo descriptorSetCreateInfo;
+    descriptorSetCreateInfo.setBindingCount(1);
+    descriptorSetCreateInfo.setPBindings(&binding);
+
+    return device->createDescriptorSetLayoutUnique(descriptorSetCreateInfo);
+}
+vk::UniquePipelineLayout createPipelineLayout(const vk::UniqueDevice& device)
+{
+
+    auto descriptor = createDescriptorSetLayout(device);
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+    pipelineLayoutInfo.setSetLayoutCount(1);
+    pipelineLayoutInfo.setPSetLayouts(&descriptor.get());
+
+    return device->createPipelineLayoutUnique(pipelineLayoutInfo);
+}
+
 std::pair<vk::UniqueRenderPass, vk::UniquePipeline>
 createPipeline(const vk::UniqueDevice& device, const vk::Extent2D& extent,
                const vk::SurfaceFormatKHR& surfaceFormat)
@@ -503,8 +530,9 @@ createPipeline(const vk::UniqueDevice& device, const vk::Extent2D& extent,
     pipelineLayoutInfo.setSetLayoutCount(0);
     pipelineLayoutInfo.setPushConstantRangeCount(0);
 
-    auto pipelineLayout =
-        device->createPipelineLayoutUnique(pipelineLayoutInfo);
+    auto pipelineLayout = createPipelineLayout(device);
+    // auto pipelineLayout =
+    //     device->createPipelineLayoutUnique(pipelineLayoutInfo);
 
     vk::AttachmentDescription colorAttachment;
     colorAttachment.setFormat(surfaceFormat.format);
@@ -737,6 +765,48 @@ int main()
 
         auto [renderFinished, imageAvailable] = createSemaphores(device);
 
+        // Descriptor Sets
+
+        vk::DescriptorPoolSize poolSize;
+        poolSize.setType(vk::DescriptorType::eUniformBuffer);
+        poolSize.setDescriptorCount(2);
+        vk::DescriptorPoolCreateInfo descPoolInfo;
+        descPoolInfo.setMaxSets(10);
+        descPoolInfo.setPoolSizeCount(1);
+        descPoolInfo.setFlags(
+            vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet);
+        descPoolInfo.setPPoolSizes(&poolSize);
+
+        auto descriptorPool = device->createDescriptorPoolUnique(descPoolInfo);
+
+        auto descriptorSetLayout = createDescriptorSetLayout(device);
+        vk::DescriptorSetAllocateInfo allocateInfo;
+        allocateInfo.setDescriptorPool(descriptorPool.get());
+        allocateInfo.setDescriptorSetCount(1);
+        allocateInfo.setPSetLayouts(&descriptorSetLayout.get());
+        auto descriptorSet = device->allocateDescriptorSetsUnique(allocateInfo);
+
+        vk::BufferCreateInfo bufferCreateInfo;
+        bufferCreateInfo.setSize(sizeof(float) * 3);
+        bufferCreateInfo.setUsage(vk::BufferUsageFlagBits::eUniformBuffer);
+        bufferCreateInfo.setSharingMode(vk::SharingMode::eExclusive);
+
+        auto buffer = device->createBufferUnique(bufferCreateInfo);
+
+        vk::DescriptorBufferInfo bufferInfo;
+        bufferInfo.setBuffer(buffer.get());
+        bufferInfo.setRange(VK_WHOLE_SIZE);
+        bufferInfo.setOffset(0);
+
+        vk::WriteDescriptorSet writeDesc;
+        writeDesc.setDstSet(descriptorSet[0].get());
+        writeDesc.setDstBinding(0);
+        writeDesc.setDstArrayElement(0);
+        writeDesc.setDescriptorCount(1);
+        writeDesc.setDescriptorType(vk::DescriptorType::eUniformBuffer);
+        writeDesc.setPBufferInfo(&bufferInfo);
+
+        // Draw
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
             uint32_t index = 0;

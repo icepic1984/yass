@@ -1,6 +1,11 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
+layout(set = 0, binding = 0) uniform myColor
+{
+    vec3 color1;
+};
+
 layout(location = 0) out vec3 fragColor;
 
 vec2 positions[3] = vec2[](
