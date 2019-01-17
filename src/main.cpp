@@ -82,7 +82,6 @@ std::vector<const char*> getRequiredExtensionsForGlfw()
 bool checkValidationLayer()
 {
     auto layerProperties = vk::enumerateInstanceLayerProperties();
-    bool available = false;
 
     for (const auto& validationLayer : validationLayers) {
         auto found = std::find_if(
@@ -424,7 +423,7 @@ vk::UniqueShaderModule createShaderModule(const vk::UniqueDevice& device,
     return device->createShaderModuleUnique(info);
 }
 
-vk::UniqueDescriptorSetLayout
+vk::DescriptorSetLayout
 createDescriptorSetLayout(const vk::UniqueDevice& device)
 {
     vk::DescriptorSetLayoutBinding binding;
@@ -438,21 +437,22 @@ createDescriptorSetLayout(const vk::UniqueDevice& device)
     descriptorSetCreateInfo.setBindingCount(1);
     descriptorSetCreateInfo.setPBindings(&binding);
 
-    return device->createDescriptorSetLayoutUnique(descriptorSetCreateInfo);
+    return device->createDescriptorSetLayout(descriptorSetCreateInfo);
 }
-vk::UniquePipelineLayout createPipelineLayout(const vk::UniqueDevice& device)
+
+std::vector<vk::DescriptorSetLayout>
+createDescriptorSetLayouts(const vk::UniqueDevice& device, std::size_t number)
 {
-
-    auto descriptor = createDescriptorSetLayout(device);
-    vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
-    pipelineLayoutInfo.setSetLayoutCount(1);
-    pipelineLayoutInfo.setPSetLayouts(&descriptor.get());
-
-    return device->createPipelineLayoutUnique(pipelineLayoutInfo);
+    std::vector<vk::DescriptorSetLayout> layouts;
+    for (int i = 0; i < number; ++i)
+        layouts.push_back(createDescriptorSetLayout(device));
+    return layouts;
 }
 
-std::pair<vk::UniqueRenderPass, vk::UniquePipeline>
-createPipeline(const vk::UniqueDevice& device, const vk::Extent2D& extent,
+std::tuple<vk::UniqueRenderPass, vk::UniquePipeline, vk::UniquePipelineLayout>
+createPipeline(const vk::UniqueDevice& device,
+               std::vector<vk::DescriptorSetLayout>& descriptorSetLayouts,
+               const vk::Extent2D& extent,
                const vk::SurfaceFormatKHR& surfaceFormat)
 {
 
@@ -527,12 +527,12 @@ createPipeline(const vk::UniqueDevice& device, const vk::Extent2D& extent,
     colorBlendInfo.setBlendConstants({0.0f, 0.0f, 0.0f, 0.0f});
 
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
-    pipelineLayoutInfo.setSetLayoutCount(0);
-    pipelineLayoutInfo.setPushConstantRangeCount(0);
+    pipelineLayoutInfo.setSetLayoutCount(
+        static_cast<uint32_t>(descriptorSetLayouts.size()));
+    pipelineLayoutInfo.setPSetLayouts(descriptorSetLayouts.data());
 
-    auto pipelineLayout = createPipelineLayout(device);
-    // auto pipelineLayout =
-    //     device->createPipelineLayoutUnique(pipelineLayoutInfo);
+    auto pipelineLayout =
+        device->createPipelineLayoutUnique(pipelineLayoutInfo);
 
     vk::AttachmentDescription colorAttachment;
     colorAttachment.setFormat(surfaceFormat.format);
@@ -590,7 +590,8 @@ createPipeline(const vk::UniqueDevice& device, const vk::Extent2D& extent,
 
     auto pipeline =
         device->createGraphicsPipelineUnique(vk::PipelineCache{}, pipelineInfo);
-    return std::make_pair(std::move(renderPass), std::move(pipeline));
+    return std::make_tuple(std::move(renderPass), std::move(pipeline),
+                           std::move(pipelineLayout));
 }
 
 std::vector<vk::UniqueFramebuffer>
@@ -629,11 +630,10 @@ std::vector<vk::CommandBuffer> createCommandBuffers(
     const vk::UniqueDevice& device, const vk::UniqueCommandPool& commandPool,
     const vk::UniquePipeline& pipeline, const vk::UniqueRenderPass& renderPass,
     const std::vector<vk::UniqueFramebuffer>& swapChainFrameBuffers,
+    const vk::UniquePipelineLayout& pipelineLayout,
+    const std::vector<vk::DescriptorSet>& descriptorSets,
     const vk::Extent2D& extent)
 {
-    // std::vector<vk::CommandBuffer>
-    // commandBuffers(swapChainFrameBuffers.size());
-
     // Allocating command buffers (one for each swap image)
     vk::CommandBufferAllocateInfo allocInfo;
     allocInfo.setCommandPool(commandPool.get());
@@ -662,6 +662,9 @@ std::vector<vk::CommandBuffer> createCommandBuffers(
                                           vk::SubpassContents::eInline);
         commandBuffers[i].bindPipeline(vk::PipelineBindPoint::eGraphics,
                                        pipeline.get());
+        commandBuffers[i].bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
+                                             pipelineLayout.get(), 0, 1,
+                                             &descriptorSets[i], 0, nullptr);
         commandBuffers[i].draw(3, 1, 0, 0);
         commandBuffers[i].endRenderPass();
         commandBuffers[i].end();
@@ -676,6 +679,53 @@ createSemaphores(const vk::UniqueDevice& device)
 
     return std::make_pair(device->createSemaphoreUnique(semaphoreCreateInfo),
                           device->createSemaphoreUnique(semaphoreCreateInfo));
+}
+
+uint32_t findMemoryType(const vk::PhysicalDevice& physicalDevice,
+                        uint32_t typeFilter, vk::MemoryPropertyFlags properties)
+{
+    auto deviceMemProps = physicalDevice.getMemoryProperties();
+    for (uint32_t i = 0; i < deviceMemProps.memoryTypeCount; i++) {
+        if ((typeFilter & (1 << i)) &&
+            ((deviceMemProps.memoryTypes[i].propertyFlags & properties) ==
+             properties)) {
+            return i;
+        }
+    }
+    throw std::runtime_error("failed to find suitable memory type!");
+    return 0;
+}
+
+std::pair<vk::UniqueBuffer, vk::UniqueDeviceMemory>
+createBuffer(const vk::PhysicalDevice& physicalDevice,
+             const vk::UniqueDevice& device, vk::DeviceSize size,
+             vk::BufferUsageFlags useage, vk::MemoryPropertyFlags properties)
+{
+    vk::BufferCreateInfo bufferCreateInfo;
+    bufferCreateInfo.setSize(size);
+    bufferCreateInfo.setUsage(useage);
+    bufferCreateInfo.setSharingMode(vk::SharingMode::eExclusive);
+
+    auto buffer = device->createBufferUnique(bufferCreateInfo);
+    vk::MemoryRequirements memoryRequirements =
+        device->getBufferMemoryRequirements(buffer.get());
+    vk::MemoryAllocateInfo memAllocInfo;
+    memAllocInfo.setAllocationSize(memoryRequirements.size);
+    memAllocInfo.setMemoryTypeIndex(findMemoryType(
+        physicalDevice, memoryRequirements.memoryTypeBits, properties));
+    auto memory = device->allocateMemoryUnique(memAllocInfo);
+
+    device->bindBufferMemory(buffer.get(), memory.get(), 0);
+    return std::make_pair(std::move(buffer), std::move(memory));
+}
+
+void updateUbo(const vk::UniqueDevice& device,
+               const vk::UniqueDeviceMemory& memory,
+               const std::array<float, 3>& color)
+{
+    void* data = device->mapMemory(memory.get(), 0, color.size() * 3);
+    std::memcpy(data, color.data(), color.size() * 3);
+    device->unmapMemory(memory.get());
 }
 
 int main()
@@ -751,27 +801,13 @@ int main()
             device, swapChainImages, surfaceFormat);
         auto queue = device->getQueue(*queueFamilyIndex, 0);
 
-        auto [renderPass, graphicPipeline] =
-            createPipeline(device, extent, surfaceFormat);
-
-        auto frameBuffers =
-            createFrameBuffers(device, renderPass, swapChainImageViews, extent);
-
-        auto commandPool = createCommandPool(device, *queueFamilyIndex);
-
-        auto commandBuffers =
-            createCommandBuffers(device, commandPool, graphicPipeline,
-                                 renderPass, frameBuffers, extent);
-
-        auto [renderFinished, imageAvailable] = createSemaphores(device);
-
-        // Descriptor Sets
-
+        // Create Descriptor Sets
         vk::DescriptorPoolSize poolSize;
         poolSize.setType(vk::DescriptorType::eUniformBuffer);
-        poolSize.setDescriptorCount(2);
+        poolSize.setDescriptorCount(
+            static_cast<uint32_t>(swapChainImages.size()));
         vk::DescriptorPoolCreateInfo descPoolInfo;
-        descPoolInfo.setMaxSets(10);
+        descPoolInfo.setMaxSets(static_cast<uint32_t>(swapChainImages.size()));
         descPoolInfo.setPoolSizeCount(1);
         descPoolInfo.setFlags(
             vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet);
@@ -779,32 +815,60 @@ int main()
 
         auto descriptorPool = device->createDescriptorPoolUnique(descPoolInfo);
 
-        auto descriptorSetLayout = createDescriptorSetLayout(device);
+        auto descriptorSetLayouts =
+            createDescriptorSetLayouts(device, swapChainImages.size());
         vk::DescriptorSetAllocateInfo allocateInfo;
         allocateInfo.setDescriptorPool(descriptorPool.get());
-        allocateInfo.setDescriptorSetCount(1);
-        allocateInfo.setPSetLayouts(&descriptorSetLayout.get());
-        auto descriptorSet = device->allocateDescriptorSetsUnique(allocateInfo);
+        allocateInfo.setDescriptorSetCount(
+            static_cast<uint32_t>(swapChainImages.size()));
+        allocateInfo.setPSetLayouts(descriptorSetLayouts.data());
+        auto descriptorSet = device->allocateDescriptorSets(allocateInfo);
 
-        vk::BufferCreateInfo bufferCreateInfo;
-        bufferCreateInfo.setSize(sizeof(float) * 3);
-        bufferCreateInfo.setUsage(vk::BufferUsageFlagBits::eUniformBuffer);
-        bufferCreateInfo.setSharingMode(vk::SharingMode::eExclusive);
+        auto [renderPass, graphicPipeline, pipelineLayout] =
+            createPipeline(device, descriptorSetLayouts, extent, surfaceFormat);
 
-        auto buffer = device->createBufferUnique(bufferCreateInfo);
+        auto frameBuffers =
+            createFrameBuffers(device, renderPass, swapChainImageViews, extent);
 
-        vk::DescriptorBufferInfo bufferInfo;
-        bufferInfo.setBuffer(buffer.get());
-        bufferInfo.setRange(VK_WHOLE_SIZE);
-        bufferInfo.setOffset(0);
+        auto commandPool = createCommandPool(device, *queueFamilyIndex);
 
-        vk::WriteDescriptorSet writeDesc;
-        writeDesc.setDstSet(descriptorSet[0].get());
-        writeDesc.setDstBinding(0);
-        writeDesc.setDstArrayElement(0);
-        writeDesc.setDescriptorCount(1);
-        writeDesc.setDescriptorType(vk::DescriptorType::eUniformBuffer);
-        writeDesc.setPBufferInfo(&bufferInfo);
+        auto [renderFinished, imageAvailable] = createSemaphores(device);
+
+        std::vector<std::pair<vk::UniqueBuffer, vk::UniqueDeviceMemory>>
+            buffers;
+
+        for (const auto& iter : swapChainImages) {
+            buffers.push_back(
+                createBuffer(physicalDevice, device, sizeof(float) * 3,
+                             vk::BufferUsageFlagBits::eUniformBuffer,
+                             vk::MemoryPropertyFlagBits::eHostVisible |
+                                 vk::MemoryPropertyFlagBits::eHostCoherent));
+        }
+
+        for (size_t i = 0; i < swapChainImages.size(); i++) {
+            vk::DescriptorBufferInfo bufferInfo;
+            bufferInfo.setBuffer(buffers[i].first.get());
+            bufferInfo.setRange(VK_WHOLE_SIZE);
+            bufferInfo.setOffset(0);
+
+            vk::WriteDescriptorSet writeDesc;
+            writeDesc.setDstSet(descriptorSet[i]);
+            writeDesc.setDstBinding(0);
+            writeDesc.setDstArrayElement(0);
+            writeDesc.setDescriptorCount(1);
+            writeDesc.setDescriptorType(vk::DescriptorType::eUniformBuffer);
+            writeDesc.setPBufferInfo(&bufferInfo);
+            device->updateDescriptorSets(1, &writeDesc, 0, nullptr);
+        }
+
+        auto commandBuffers = createCommandBuffers(
+            device, commandPool, graphicPipeline, renderPass, frameBuffers,
+            pipelineLayout, descriptorSet, extent);
+
+        auto colors = std::array<std::array<float, 3>, 3>{
+            {std::array<float, 3>{1.0f, 0.0f, 0.0f},
+             std::array<float, 3>{0.0f, 1.0f, 0.0f},
+             std::array<float, 3>{1.0f, 0.0f, 0.0f}}};
 
         // Draw
         while (!glfwWindowShouldClose(window)) {
@@ -814,6 +878,7 @@ int main()
                 swapChain.get(), std::numeric_limits<uint64_t>::max(),
                 imageAvailable.get(), vk::Fence{}, &index);
 
+            updateUbo(device, buffers[index].second, colors[index]);
             vk::SubmitInfo submitInfo;
             vk::PipelineStageFlags waitStages[] = {
                 vk::PipelineStageFlagBits::eColorAttachmentOutput};
