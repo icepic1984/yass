@@ -622,7 +622,6 @@ vk::UniqueCommandPool createCommandPool(const vk::UniqueDevice& device,
 {
     vk::CommandPoolCreateInfo commandPoolInfo;
     commandPoolInfo.setQueueFamilyIndex(index);
-    device->createCommandPoolUnique(commandPoolInfo);
     return device->createCommandPoolUnique(commandPoolInfo);
 }
 
@@ -717,6 +716,66 @@ createBuffer(const vk::PhysicalDevice& physicalDevice,
 
     device->bindBufferMemory(buffer.get(), memory.get(), 0);
     return std::make_pair(std::move(buffer), std::move(memory));
+}
+
+std::pair<vk::UniqueImage, vk::UniqueDeviceMemory>
+createImage(const vk::PhysicalDevice& physicalDevice,
+            const vk::UniqueDevice& device, uint32_t width, uint32_t height,
+            vk::Format format, vk::ImageTiling tiling,
+            vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties)
+{
+    vk::ImageCreateInfo imageInfo;
+    imageInfo.setImageType(vk::ImageType::e2D);
+    imageInfo.setExtent({width, height, 1});
+    imageInfo.setMipLevels(1);
+    imageInfo.setArrayLayers(1);
+    imageInfo.setFormat(format);
+    imageInfo.setTiling(tiling);
+    imageInfo.setInitialLayout(vk::ImageLayout::eUndefined);
+    imageInfo.setUsage(usage);
+    imageInfo.setSamples(vk::SampleCountFlagBits::e1);
+    imageInfo.setSharingMode(vk::SharingMode::eExclusive);
+    auto image = device->createImageUnique(imageInfo);
+
+    auto memoryRequirements = device->getImageMemoryRequirements(image.get());
+
+    vk::MemoryAllocateInfo memAllocInfo;
+    memAllocInfo.setAllocationSize(memoryRequirements.size);
+    memAllocInfo.setMemoryTypeIndex(findMemoryType(
+        physicalDevice, memoryRequirements.memoryTypeBits, properties));
+
+    auto memory = device->allocateMemoryUnique(memAllocInfo);
+    device->bindImageMemory(image.get(), memory.get(), 0);
+
+    return std::make_pair(std::move(image), std::move(memory));
+}
+
+void copyData(const vk::UniqueDevice& device, const vk::Queue& queue,
+              const vk::UniqueCommandPool& commandPool,
+              const vk::UniqueBuffer& src, const vk::UniqueBuffer& dst,
+              const vk::DeviceSize& size)
+{
+    vk::CommandBufferAllocateInfo allocInfo;
+    allocInfo.setCommandPool(commandPool.get());
+    allocInfo.setLevel(vk::CommandBufferLevel::ePrimary);
+    allocInfo.setCommandBufferCount(1);
+    auto command = device->allocateCommandBuffersUnique(allocInfo);
+
+    vk::CommandBufferBeginInfo beginInfo;
+    beginInfo.setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+    command.front()->begin(beginInfo);
+
+    vk::BufferCopy bufferCopy;
+    bufferCopy.setSize(size);
+    bufferCopy.setSrcOffset(0);
+    bufferCopy.setDstOffset(0);
+    command.front()->copyBuffer(src.get(), dst.get(), 1, &bufferCopy);
+    command.front()->end();
+    vk::SubmitInfo submitInfo;
+    submitInfo.setCommandBufferCount(1);
+    submitInfo.setPCommandBuffers(&command.front().get());
+    queue.submit(1, &submitInfo, vk::Fence{});
+    queue.waitIdle();
 }
 
 void updateUbo(const vk::UniqueDevice& device,
@@ -899,41 +958,9 @@ int main()
             presentInfo.setPImageIndices(&index);
             queue.presentKHR(presentInfo);
         }
-        //  std::cout << index. << std::endl;
-
-        // uint32_t imageIndex = device->acquireNextImageKHR(
-        //     swapChain.get(), std::numeric_limits<uint64_t>::max(),
-        //     imageAvailable, nullptr);
-
-        // std::vector<vk::UniqueCommandBuffer> commandBuffers;
     }
 
     std::cout << "Glfw extensions" << std::endl;
-
-    //  initVulkan();
-    // uint32_t extensionCount = 0;
-
-    // auto result = vk::enumerateInstanceLayerProperties();
-    // std::cout << result.size() << std::endl;
-
-    // glfwInit();
-
-    // vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount,
-    // nullptr);
-
-    // std::cout << extensionCount << " extensions supported" << std::endl;
-
-    // // glm::mat4 matrix;
-    // // glm::vec4 vec;
-    // // auto test = matrix * vec;
-
-    // while (!glfwWindowShouldClose(window)) {
-    //     glfwPollEvents();
-    // }
-
-    // glfwDestroyWindow(window);
-
-    // glfwTerminate();
 
     return 0;
 }
