@@ -19,6 +19,9 @@
 
 const bool enableValidationLayer = true;
 
+const int WIDTH = 800;
+const int HEIGHT = 600;
+
 // clang-format off
 const std::vector<const char*> validationLayers{
     "VK_LAYER_LUNARG_standard_validation",
@@ -749,11 +752,46 @@ createImage(const vk::PhysicalDevice& physicalDevice,
 
     return std::make_pair(std::move(image), std::move(memory));
 }
+void copyBufferToImage(const vk::UniqueDevice& device, const vk::Queue& queue,
+                       const vk::UniqueCommandPool& commandPool,
+                       const vk::UniqueBuffer& buffer,
+                       const vk::UniqueImage& image, uint32_t width,
+                       uint32_t height)
+{
+    vk::CommandBufferAllocateInfo allocInfo;
+    allocInfo.setCommandPool(commandPool.get());
+    allocInfo.setLevel(vk::CommandBufferLevel::ePrimary);
+    allocInfo.setCommandBufferCount(1);
+    auto command = device->allocateCommandBuffersUnique(allocInfo);
 
-void copyData(const vk::UniqueDevice& device, const vk::Queue& queue,
-              const vk::UniqueCommandPool& commandPool,
-              const vk::UniqueBuffer& src, const vk::UniqueBuffer& dst,
-              const vk::DeviceSize& size)
+    vk::CommandBufferBeginInfo beginInfo;
+    beginInfo.setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+    command.front()->begin(beginInfo);
+
+    vk::BufferImageCopy region;
+    region.setBufferOffset(0);
+    region.setBufferRowLength(0);
+    region.setBufferImageHeight(0);
+    region.setImageSubresource(
+        vk::ImageSubresourceLayers{vk::ImageAspectFlagBits::eColor, 0, 0, 1});
+    region.setImageOffset({0, 0, 0});
+    region.setImageExtent({width, height, 1});
+
+    command.front()->copyBufferToImage(buffer.get(), image.get(),
+                                       vk::ImageLayout::eTransferDstOptimal, 1,
+                                       &region);
+
+    vk::SubmitInfo submitInfo;
+    submitInfo.setCommandBufferCount(1);
+    submitInfo.setPCommandBuffers(&command.front().get());
+    queue.submit(1, &submitInfo, vk::Fence{});
+    queue.waitIdle();
+}
+
+void copyBufferData(const vk::UniqueDevice& device, const vk::Queue& queue,
+                    const vk::UniqueCommandPool& commandPool,
+                    const vk::UniqueBuffer& src, const vk::UniqueBuffer& dst,
+                    const vk::DeviceSize& size)
 {
     vk::CommandBufferAllocateInfo allocInfo;
     allocInfo.setCommandPool(commandPool.get());
@@ -776,6 +814,36 @@ void copyData(const vk::UniqueDevice& device, const vk::Queue& queue,
     submitInfo.setPCommandBuffers(&command.front().get());
     queue.submit(1, &submitInfo, vk::Fence{});
     queue.waitIdle();
+}
+
+void createTextureImage(const vk::PhysicalDevice& physicalDevice,
+                        const vk::UniqueDevice& device, const vk::Queue& queue,
+                        const vk::UniqueCommandPool& commandPool)
+{
+    std::vector<uint32_t> data(WIDTH * HEIGHT * 4, 0xFFFFFFFF);
+
+    vk::DeviceSize imageSize = WIDTH * HEIGHT * 4;
+
+    auto stagingBuffer =
+        createBuffer(physicalDevice, device, imageSize,
+                     vk::BufferUsageFlagBits::eTransferSrc,
+                     vk::MemoryPropertyFlagBits::eHostVisible |
+                         vk::MemoryPropertyFlagBits::eHostCoherent);
+
+    void* map = device->mapMemory(stagingBuffer.second.get(), 0, imageSize);
+    std::memcpy(map, data.data(), imageSize);
+    device->unmapMemory(stagingBuffer.second.get());
+
+    // stbi_image_free(pixels);
+
+    auto imageBuffer = createImage(
+        physicalDevice, device, WIDTH, HEIGHT, vk::Format::eR8G8B8A8Unorm,
+        vk::ImageTiling::eOptimal,
+        vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+        vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+    copyBufferToImage(device, queue, commandPool, stagingBuffer.first,
+                      imageBuffer.first, WIDTH, HEIGHT);
 }
 
 void updateUbo(const vk::UniqueDevice& device,
@@ -808,7 +876,7 @@ int main()
         // Create window using glfw
         std::cout << "Create window" << std::endl;
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        auto window = glfw::createWindow(800, 600, "test");
+        auto window = glfw::createWindow(WIDTH, HEIGHT, "test");
 
         // Retrieve vulkan surface from windwo
         auto surface = window.createWindowSurface(instance);
@@ -833,7 +901,7 @@ int main()
             chooseSwapPresentMode(swapChainCapabilities.presentModes);
 
         auto extent =
-            chooseSwapExtent(swapChainCapabilities.capabilities, 800, 600);
+            chooseSwapExtent(swapChainCapabilities.capabilities, WIDTH, HEIGHT);
 
         printSurfaceCapabilities(swapChainCapabilities.capabilities);
         auto queueFamilyIndex = findQueueFamilies(physicalDevice);
@@ -890,6 +958,8 @@ int main()
             createFrameBuffers(device, renderPass, swapChainImageViews, extent);
 
         auto commandPool = createCommandPool(device, *queueFamilyIndex);
+
+        createTextureImage(physicalDevice, device, queue, commandPool);
 
         auto [renderFinished, imageAvailable] = createSemaphores(device);
 
