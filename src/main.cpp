@@ -780,7 +780,7 @@ void copyBufferToImage(const vk::UniqueDevice& device, const vk::Queue& queue,
     command.front()->copyBufferToImage(buffer.get(), image.get(),
                                        vk::ImageLayout::eTransferDstOptimal, 1,
                                        &region);
-
+    command.front()->end();
     vk::SubmitInfo submitInfo;
     submitInfo.setCommandBufferCount(1);
     submitInfo.setPCommandBuffers(&command.front().get());
@@ -816,6 +816,49 @@ void copyBufferData(const vk::UniqueDevice& device, const vk::Queue& queue,
     queue.waitIdle();
 }
 
+void transitionImageLayout(const vk::UniqueDevice& device,
+                           const vk::Queue& queue,
+                           const vk::UniqueCommandPool& commandPool,
+                           const vk::UniqueImage& image,
+                           const vk::Format& format, vk::ImageLayout oldLayout,
+                           vk::ImageLayout newLayout,
+                           vk::AccessFlags srcAccessMask,
+                           vk::AccessFlags dstAccessMask)
+{
+    vk::CommandBufferAllocateInfo allocInfo;
+    allocInfo.setCommandPool(commandPool.get());
+    allocInfo.setLevel(vk::CommandBufferLevel::ePrimary);
+    allocInfo.setCommandBufferCount(1);
+    auto command = device->allocateCommandBuffersUnique(allocInfo);
+
+    vk::CommandBufferBeginInfo beginInfo;
+    beginInfo.setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+    command.front()->begin(beginInfo);
+
+    vk::ImageMemoryBarrier barrier;
+    barrier.setOldLayout(oldLayout);
+    barrier.setNewLayout(newLayout);
+    barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
+    barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
+    barrier.setImage(image.get());
+    barrier.setDstAccessMask(dstAccessMask);
+    barrier.setSrcAccessMask(srcAccessMask);
+    barrier.setSubresourceRange(
+        vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
+
+    command.front()->pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+                                     vk::PipelineStageFlagBits::eTransfer,
+                                     vk::DependencyFlags{}, 0, nullptr, 0,
+                                     nullptr, 1, &barrier);
+
+    command.front()->end();
+    vk::SubmitInfo submitInfo;
+    submitInfo.setCommandBufferCount(1);
+    submitInfo.setPCommandBuffers(&command.front().get());
+    queue.submit(1, &submitInfo, vk::Fence{});
+    queue.waitIdle();
+}
+
 void createTextureImage(const vk::PhysicalDevice& physicalDevice,
                         const vk::UniqueDevice& device, const vk::Queue& queue,
                         const vk::UniqueCommandPool& commandPool)
@@ -842,8 +885,19 @@ void createTextureImage(const vk::PhysicalDevice& physicalDevice,
         vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
         vk::MemoryPropertyFlagBits::eDeviceLocal);
 
+    transitionImageLayout(
+        device, queue, commandPool, imageBuffer.first,
+        vk::Format::eR8G8B8A8Unorm, vk::ImageLayout::eUndefined,
+        vk::ImageLayout::eTransferDstOptimal, vk::AccessFlags{},
+        vk::AccessFlagBits::eTransferWrite);
+
     copyBufferToImage(device, queue, commandPool, stagingBuffer.first,
                       imageBuffer.first, WIDTH, HEIGHT);
+    // transitionImageLayout(
+    //     device, queue, commandPool, imageBuffer.first,
+    //     vk::Format::eR8G8B8A8Unorm, vk::ImageLayout::eTransferDstOptimal,
+    //     vk::ImageLayout::ePresentSrcKHR, vk::AccessFlagBits::eTransferWrite,
+    //     vk::AccessFlagBits::eTransferRead);
 }
 
 void updateUbo(const vk::UniqueDevice& device,
