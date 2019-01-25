@@ -817,13 +817,15 @@ void copyBufferData(const vk::UniqueDevice& device, const vk::Queue& queue,
     queue.waitIdle();
 }
 
-void transitionImageLayout(
-    const vk::UniqueDevice& device, const vk::Queue& queue,
-    const vk::UniqueCommandPool& commandPool, const vk::UniqueImage& image,
-    const vk::Format& format, vk::ImageLayout oldLayout,
-    vk::ImageLayout newLayout, vk::AccessFlags srcAccessMask,
-    vk::AccessFlags dstAccessMask, vk::PipelineStageFlags srcStageMask,
-    vk::PipelineStageFlags dstStageMask)
+void transitionImageLayout(const vk::UniqueDevice& device,
+                           const vk::Queue& queue,
+                           const vk::UniqueCommandPool& commandPool,
+                           const vk::Image& image, const vk::Format& format,
+                           vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
+                           vk::AccessFlags srcAccessMask,
+                           vk::AccessFlags dstAccessMask,
+                           vk::PipelineStageFlags srcStageMask,
+                           vk::PipelineStageFlags dstStageMask)
 {
     vk::CommandBufferAllocateInfo allocInfo;
     allocInfo.setCommandPool(commandPool.get());
@@ -840,7 +842,7 @@ void transitionImageLayout(
     barrier.setNewLayout(newLayout);
     barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
     barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-    barrier.setImage(image.get());
+    barrier.setImage(image);
     barrier.setSrcAccessMask(srcAccessMask);
     barrier.setDstAccessMask(dstAccessMask);
     barrier.setSubresourceRange(
@@ -863,7 +865,7 @@ createTextureImage(const vk::PhysicalDevice& physicalDevice,
                    const vk::UniqueDevice& device, const vk::Queue& queue,
                    const vk::UniqueCommandPool& commandPool)
 {
-    std::vector<uint32_t> data(WIDTH * HEIGHT * 4, 0xFFFFFFFF);
+    std::vector<uint32_t> data(WIDTH * HEIGHT * 4, 0xFF0000FF);
 
     vk::DeviceSize imageSize = WIDTH * HEIGHT * 4;
 
@@ -885,7 +887,7 @@ createTextureImage(const vk::PhysicalDevice& physicalDevice,
                     vk::MemoryPropertyFlagBits::eDeviceLocal);
 
     transitionImageLayout(
-        device, queue, commandPool, imageBuffer.first,
+        device, queue, commandPool, imageBuffer.first.get(),
         vk::Format::eR8G8B8A8Unorm, vk::ImageLayout::eUndefined,
         vk::ImageLayout::eTransferDstOptimal, vk::AccessFlags{0},
         vk::AccessFlagBits::eTransferWrite,
@@ -895,7 +897,7 @@ createTextureImage(const vk::PhysicalDevice& physicalDevice,
     copyBufferToImage(device, queue, commandPool, stagingBuffer.first,
                       imageBuffer.first, WIDTH, HEIGHT);
     transitionImageLayout(
-        device, queue, commandPool, imageBuffer.first,
+        device, queue, commandPool, imageBuffer.first.get(),
         vk::Format::eR8G8B8A8Unorm, vk::ImageLayout::eTransferDstOptimal,
         vk::ImageLayout::eTransferSrcOptimal,
         vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eTransferRead,
@@ -924,6 +926,13 @@ void copyImage(const vk::UniqueDevice& device, const vk::Queue& queue,
     allocInfo.setCommandBufferCount(1);
     auto command = device->allocateCommandBuffersUnique(allocInfo);
 
+    transitionImageLayout(
+        device, queue, commandPool, dst, vk::Format::eR8G8B8A8Unorm,
+        vk::ImageLayout::ePresentSrcKHR, vk::ImageLayout::eTransferDstOptimal,
+        vk::AccessFlagBits::eMemoryRead, vk::AccessFlagBits::eTransferWrite,
+        vk::PipelineStageFlagBits::eTransfer,
+        vk::PipelineStageFlagBits::eTransfer);
+
     vk::CommandBufferBeginInfo beginInfo;
     beginInfo.setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
     command.front()->begin(beginInfo);
@@ -935,13 +944,20 @@ void copyImage(const vk::UniqueDevice& device, const vk::Queue& queue,
     copyRegion.setDstOffset({0, 0, 0});
     copyRegion.setExtent({WIDTH, HEIGHT, 1});
     command.front()->copyImage(src, vk::ImageLayout::eTransferSrcOptimal, dst,
-                               vk::ImageLayout::ePresentSrcKHR, 1, &copyRegion);
+                               vk::ImageLayout::eTransferDstOptimal, 1,
+                               &copyRegion);
     command.front()->end();
     vk::SubmitInfo submitInfo;
     submitInfo.setCommandBufferCount(1);
     submitInfo.setPCommandBuffers(&command.front().get());
     queue.submit(1, &submitInfo, vk::Fence{});
     queue.waitIdle();
+    transitionImageLayout(
+        device, queue, commandPool, dst, vk::Format::eR8G8B8A8Unorm,
+        vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::ePresentSrcKHR,
+        vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eMemoryRead,
+        vk::PipelineStageFlagBits::eTransfer,
+        vk::PipelineStageFlagBits::eBottomOfPipe);
 }
 
 int main()
@@ -1090,29 +1106,38 @@ int main()
              std::array<float, 3>{1.0f, 0.0f, 0.0f}}};
 
         // Draw
+        vk::FenceCreateInfo fenceInfo;
+        auto fence = device->createFence(fenceInfo);
+
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
             uint32_t index = 0;
-            device->acquireNextImageKHR(
-                swapChain.get(), std::numeric_limits<uint64_t>::max(),
-                imageAvailable.get(), vk::Fence{}, &index);
+            device->acquireNextImageKHR(swapChain.get(),
+                                        std::numeric_limits<uint64_t>::max(),
+                                        vk::Semaphore{}, fence, &index);
+            device->waitForFences(1, &fence, true,
+                                  std::numeric_limits<uint64_t>::max());
+            device->resetFences(1, &fence);
 
-            updateUbo(device, buffers[index].second, colors[index]);
-            vk::SubmitInfo submitInfo;
-            vk::PipelineStageFlags waitStages[] = {
-                vk::PipelineStageFlagBits::eColorAttachmentOutput};
-            submitInfo.setWaitSemaphoreCount(1);
-            submitInfo.setPWaitSemaphores(&imageAvailable.get());
-            submitInfo.setPWaitDstStageMask(waitStages);
-            submitInfo.setCommandBufferCount(1);
-            submitInfo.setPCommandBuffers(&commandBuffers[index]);
-            submitInfo.setSignalSemaphoreCount(1);
-            submitInfo.setPSignalSemaphores(&renderFinished.get());
-            queue.submit(1, &submitInfo, vk::Fence{});
+            copyImage(device, queue, commandPool, texture.first.get(),
+                      swapChainImages[index]);
+
+            // updateUbo(device, buffers[index].second, colors[index]);
+            // vk::SubmitInfo submitInfo;
+            // vk::PipelineStageFlags waitStages[] = {
+            //     vk::PipelineStageFlagBits::eColorAttachmentOutput};
+            // submitInfo.setWaitSemaphoreCount(1);
+            // submitInfo.setPWaitSemaphores(&imageAvailable.get());
+            // submitInfo.setPWaitDstStageMask(waitStages);
+            // submitInfo.setCommandBufferCount(1);
+            // submitInfo.setPCommandBuffers(&commandBuffers[index]);
+            // submitInfo.setSignalSemaphoreCount(1);
+            // submitInfo.setPSignalSemaphores(&renderFinished.get());
+            // queue.submit(1, &submitInfo, vk::Fence{});
 
             vk::PresentInfoKHR presentInfo;
-            presentInfo.setWaitSemaphoreCount(1);
-            presentInfo.setPWaitSemaphores(&renderFinished.get());
+            presentInfo.setWaitSemaphoreCount(0);
+            presentInfo.setPWaitSemaphores(nullptr);
             presentInfo.setSwapchainCount(1);
             presentInfo.setPSwapchains(&swapChain.get());
             presentInfo.setPImageIndices(&index);
