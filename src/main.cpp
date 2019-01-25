@@ -629,7 +629,7 @@ vk::UniqueCommandPool createCommandPool(const vk::UniqueDevice& device,
     return device->createCommandPoolUnique(commandPoolInfo);
 }
 
-std::vector<vk::CommandBuffer> createCommandBuffers(
+std::vector<vk::CommandBuffer> createDrawCommand(
     const vk::UniqueDevice& device, const vk::UniqueCommandPool& commandPool,
     const vk::UniquePipeline& pipeline, const vk::UniqueRenderPass& renderPass,
     const std::vector<vk::UniqueFramebuffer>& swapChainFrameBuffers,
@@ -914,6 +914,36 @@ void updateUbo(const vk::UniqueDevice& device,
     device->unmapMemory(memory.get());
 }
 
+void copyImage(const vk::UniqueDevice& device, const vk::Queue& queue,
+               const vk::UniqueCommandPool& commandPool, const vk::Image& src,
+               const vk::Image& dst)
+{
+    vk::CommandBufferAllocateInfo allocInfo;
+    allocInfo.setCommandPool(commandPool.get());
+    allocInfo.setLevel(vk::CommandBufferLevel::ePrimary);
+    allocInfo.setCommandBufferCount(1);
+    auto command = device->allocateCommandBuffersUnique(allocInfo);
+
+    vk::CommandBufferBeginInfo beginInfo;
+    beginInfo.setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+    command.front()->begin(beginInfo);
+
+    vk::ImageCopy copyRegion;
+    copyRegion.setSrcSubresource({vk::ImageAspectFlagBits::eColor, 0, 0, 1});
+    copyRegion.setSrcOffset({0, 0, 0});
+    copyRegion.setDstSubresource({vk::ImageAspectFlagBits::eColor, 0, 0, 1});
+    copyRegion.setDstOffset({0, 0, 0});
+    copyRegion.setExtent({WIDTH, HEIGHT, 1});
+    command.front()->copyImage(src, vk::ImageLayout::eTransferSrcOptimal, dst,
+                               vk::ImageLayout::ePresentSrcKHR, 1, &copyRegion);
+    command.front()->end();
+    vk::SubmitInfo submitInfo;
+    submitInfo.setCommandBufferCount(1);
+    submitInfo.setPCommandBuffers(&command.front().get());
+    queue.submit(1, &submitInfo, vk::Fence{});
+    queue.waitIdle();
+}
+
 int main()
 {
     glfwInit();
@@ -1050,7 +1080,7 @@ int main()
             device->updateDescriptorSets(1, &writeDesc, 0, nullptr);
         }
 
-        auto commandBuffers = createCommandBuffers(
+        auto commandBuffers = createDrawCommand(
             device, commandPool, graphicPipeline, renderPass, frameBuffers,
             pipelineLayout, descriptorSet, extent);
 
