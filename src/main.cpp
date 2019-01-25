@@ -920,18 +920,33 @@ void copyImage(const vk::UniqueDevice& device, const vk::Queue& queue,
                const vk::UniqueCommandPool& commandPool, const vk::Image& src,
                const vk::Image& dst)
 {
+    // Dirty hack for now!  On first run, presentation images are
+    // undefined. Therefore, before first transition, oldLayout is
+    // undefined, after PresentSrc.
+    static bool first = true;
+
     vk::CommandBufferAllocateInfo allocInfo;
     allocInfo.setCommandPool(commandPool.get());
     allocInfo.setLevel(vk::CommandBufferLevel::ePrimary);
     allocInfo.setCommandBufferCount(1);
     auto command = device->allocateCommandBuffersUnique(allocInfo);
 
-    transitionImageLayout(
-        device, queue, commandPool, dst, vk::Format::eR8G8B8A8Unorm,
-        vk::ImageLayout::ePresentSrcKHR, vk::ImageLayout::eTransferDstOptimal,
-        vk::AccessFlagBits::eMemoryRead, vk::AccessFlagBits::eTransferWrite,
-        vk::PipelineStageFlagBits::eTransfer,
-        vk::PipelineStageFlagBits::eTransfer);
+    if (first) {
+        transitionImageLayout(
+            device, queue, commandPool, dst, vk::Format::eR8G8B8A8Unorm,
+            vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+            vk::AccessFlagBits::eMemoryRead, vk::AccessFlagBits::eTransferWrite,
+            vk::PipelineStageFlagBits::eTransfer,
+            vk::PipelineStageFlagBits::eTransfer);
+    } else {
+        transitionImageLayout(
+            device, queue, commandPool, dst, vk::Format::eR8G8B8A8Unorm,
+            vk::ImageLayout::ePresentSrcKHR,
+            vk::ImageLayout::eTransferDstOptimal,
+            vk::AccessFlagBits::eMemoryRead, vk::AccessFlagBits::eTransferWrite,
+            vk::PipelineStageFlagBits::eTransfer,
+            vk::PipelineStageFlagBits::eTransfer);
+    }
 
     vk::CommandBufferBeginInfo beginInfo;
     beginInfo.setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
