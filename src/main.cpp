@@ -291,7 +291,8 @@ createSwapChain(const vk::UniqueDevice& device,
     info.setImageExtent(extent);
     info.setImageColorSpace(surfaceFormat.colorSpace);
     info.setImageArrayLayers(1);
-    info.setImageUsage(vk::ImageUsageFlagBits::eColorAttachment);
+    info.setImageUsage(vk::ImageUsageFlagBits::eColorAttachment |
+                       vk::ImageUsageFlagBits::eTransferDst);
     // Graphic and presentation are on same queue therefore choose exclusive
     info.setImageSharingMode(vk::SharingMode::eExclusive);
     info.setPreTransform(vk::SurfaceTransformFlagBitsKHR::eIdentity);
@@ -816,14 +817,13 @@ void copyBufferData(const vk::UniqueDevice& device, const vk::Queue& queue,
     queue.waitIdle();
 }
 
-void transitionImageLayout(const vk::UniqueDevice& device,
-                           const vk::Queue& queue,
-                           const vk::UniqueCommandPool& commandPool,
-                           const vk::UniqueImage& image,
-                           const vk::Format& format, vk::ImageLayout oldLayout,
-                           vk::ImageLayout newLayout,
-                           vk::AccessFlags srcAccessMask,
-                           vk::AccessFlags dstAccessMask)
+void transitionImageLayout(
+    const vk::UniqueDevice& device, const vk::Queue& queue,
+    const vk::UniqueCommandPool& commandPool, const vk::UniqueImage& image,
+    const vk::Format& format, vk::ImageLayout oldLayout,
+    vk::ImageLayout newLayout, vk::AccessFlags srcAccessMask,
+    vk::AccessFlags dstAccessMask, vk::PipelineStageFlags srcStageMask,
+    vk::PipelineStageFlags dstStageMask)
 {
     vk::CommandBufferAllocateInfo allocInfo;
     allocInfo.setCommandPool(commandPool.get());
@@ -841,13 +841,12 @@ void transitionImageLayout(const vk::UniqueDevice& device,
     barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
     barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
     barrier.setImage(image.get());
-    barrier.setDstAccessMask(dstAccessMask);
     barrier.setSrcAccessMask(srcAccessMask);
+    barrier.setDstAccessMask(dstAccessMask);
     barrier.setSubresourceRange(
         vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
 
-    command.front()->pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
-                                     vk::PipelineStageFlagBits::eTransfer,
+    command.front()->pipelineBarrier(srcStageMask, dstStageMask,
                                      vk::DependencyFlags{}, 0, nullptr, 0,
                                      nullptr, 1, &barrier);
 
@@ -859,9 +858,10 @@ void transitionImageLayout(const vk::UniqueDevice& device,
     queue.waitIdle();
 }
 
-void createTextureImage(const vk::PhysicalDevice& physicalDevice,
-                        const vk::UniqueDevice& device, const vk::Queue& queue,
-                        const vk::UniqueCommandPool& commandPool)
+std::pair<vk::UniqueImage, vk::UniqueDeviceMemory>
+createTextureImage(const vk::PhysicalDevice& physicalDevice,
+                   const vk::UniqueDevice& device, const vk::Queue& queue,
+                   const vk::UniqueCommandPool& commandPool)
 {
     std::vector<uint32_t> data(WIDTH * HEIGHT * 4, 0xFFFFFFFF);
 
@@ -877,27 +877,32 @@ void createTextureImage(const vk::PhysicalDevice& physicalDevice,
     std::memcpy(map, data.data(), imageSize);
     device->unmapMemory(stagingBuffer.second.get());
 
-    // stbi_image_free(pixels);
-
-    auto imageBuffer = createImage(
-        physicalDevice, device, WIDTH, HEIGHT, vk::Format::eR8G8B8A8Unorm,
-        vk::ImageTiling::eOptimal,
-        vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
-        vk::MemoryPropertyFlagBits::eDeviceLocal);
+    auto imageBuffer =
+        createImage(physicalDevice, device, WIDTH, HEIGHT,
+                    vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
+                    vk::ImageUsageFlagBits::eTransferDst |
+                        vk::ImageUsageFlagBits::eTransferSrc,
+                    vk::MemoryPropertyFlagBits::eDeviceLocal);
 
     transitionImageLayout(
         device, queue, commandPool, imageBuffer.first,
         vk::Format::eR8G8B8A8Unorm, vk::ImageLayout::eUndefined,
-        vk::ImageLayout::eTransferDstOptimal, vk::AccessFlags{},
-        vk::AccessFlagBits::eTransferWrite);
+        vk::ImageLayout::eTransferDstOptimal, vk::AccessFlags{0},
+        vk::AccessFlagBits::eTransferWrite,
+        vk::PipelineStageFlagBits::eTopOfPipe,
+        vk::PipelineStageFlagBits::eTransfer);
 
     copyBufferToImage(device, queue, commandPool, stagingBuffer.first,
                       imageBuffer.first, WIDTH, HEIGHT);
-    // transitionImageLayout(
-    //     device, queue, commandPool, imageBuffer.first,
-    //     vk::Format::eR8G8B8A8Unorm, vk::ImageLayout::eTransferDstOptimal,
-    //     vk::ImageLayout::ePresentSrcKHR, vk::AccessFlagBits::eTransferWrite,
-    //     vk::AccessFlagBits::eTransferRead);
+    transitionImageLayout(
+        device, queue, commandPool, imageBuffer.first,
+        vk::Format::eR8G8B8A8Unorm, vk::ImageLayout::eTransferDstOptimal,
+        vk::ImageLayout::eTransferSrcOptimal,
+        vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eTransferRead,
+        vk::PipelineStageFlagBits::eTransfer,
+        vk::PipelineStageFlagBits::eTransfer);
+
+    return imageBuffer;
 }
 
 void updateUbo(const vk::UniqueDevice& device,
@@ -1013,7 +1018,8 @@ int main()
 
         auto commandPool = createCommandPool(device, *queueFamilyIndex);
 
-        createTextureImage(physicalDevice, device, queue, commandPool);
+        auto texture =
+            createTextureImage(physicalDevice, device, queue, commandPool);
 
         auto [renderFinished, imageAvailable] = createSemaphores(device);
 
