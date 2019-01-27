@@ -1,8 +1,80 @@
+#include <chrono>
+#include <random>
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan.hpp>
 #include <glfw.hpp>
 #include <GLFW/glfw3.h>
 #include <fstream>
+using namespace std::chrono_literals;
+
+template <typename T> class Timer {
+public:
+    Timer() : m_start(std::chrono::system_clock::now())
+    {
+    }
+
+    T elapsed()
+    {
+        return std::chrono::duration_cast<T>(std::chrono::system_clock::now() -
+                                             m_start);
+    }
+
+    void reset()
+    {
+        m_start = std::chrono::system_clock::now();
+    }
+
+private:
+    std::chrono::time_point<std::chrono::system_clock> m_start;
+};
+
+struct Rgba {
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+    uint8_t a;
+};
+
+class ImageView {
+public:
+    ImageView(int width, int height, int depth, void* memory)
+        : m_width(width), m_height(height), m_depth(depth),
+          m_memory(static_cast<uint8_t*>(memory))
+    {
+    }
+
+    uint8_t& operator()(int x, int y, int d)
+    {
+        return m_memory[y * m_width * m_depth + (x * m_depth + d)];
+    }
+
+    uint8_t operator()(int x, int y, int d) const
+    {
+        return 0;
+    }
+
+    int width()
+    {
+        return m_width;
+    }
+
+    int height()
+    {
+        return m_height;
+    }
+
+    int depth()
+    {
+        return m_depth;
+    }
+
+private:
+    int m_width;
+    int m_height;
+    int m_depth;
+
+    uint8_t* m_memory;
+};
 
 // #define GLM_FORCE_RADIANS
 // #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -725,8 +797,9 @@ createBuffer(const vk::PhysicalDevice& physicalDevice,
 std::pair<vk::UniqueImage, vk::UniqueDeviceMemory>
 createImage(const vk::PhysicalDevice& physicalDevice,
             const vk::UniqueDevice& device, uint32_t width, uint32_t height,
-            vk::Format format, vk::ImageTiling tiling,
-            vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties)
+            vk::Format format, vk::ImageLayout initialLayout,
+            vk::ImageTiling tiling, vk::ImageUsageFlags usage,
+            vk::MemoryPropertyFlags properties)
 {
     vk::ImageCreateInfo imageInfo;
     imageInfo.setImageType(vk::ImageType::e2D);
@@ -735,7 +808,7 @@ createImage(const vk::PhysicalDevice& physicalDevice,
     imageInfo.setArrayLayers(1);
     imageInfo.setFormat(format);
     imageInfo.setTiling(tiling);
-    imageInfo.setInitialLayout(vk::ImageLayout::eUndefined);
+    imageInfo.setInitialLayout(initialLayout);
     imageInfo.setUsage(usage);
     imageInfo.setSamples(vk::SampleCountFlagBits::e1);
     imageInfo.setSharingMode(vk::SharingMode::eExclusive);
@@ -879,12 +952,12 @@ createTextureImage(const vk::PhysicalDevice& physicalDevice,
     std::memcpy(map, data.data(), imageSize);
     device->unmapMemory(stagingBuffer.second.get());
 
-    auto imageBuffer =
-        createImage(physicalDevice, device, WIDTH, HEIGHT,
-                    vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
-                    vk::ImageUsageFlagBits::eTransferDst |
-                        vk::ImageUsageFlagBits::eTransferSrc,
-                    vk::MemoryPropertyFlagBits::eDeviceLocal);
+    auto imageBuffer = createImage(
+        physicalDevice, device, WIDTH, HEIGHT, vk::Format::eR8G8B8A8Unorm,
+        vk::ImageLayout::eUndefined, vk::ImageTiling::eOptimal,
+        vk::ImageUsageFlagBits::eTransferDst |
+            vk::ImageUsageFlagBits::eTransferSrc,
+        vk::MemoryPropertyFlagBits::eDeviceLocal);
 
     transitionImageLayout(
         device, queue, commandPool, imageBuffer.first.get(),
@@ -907,6 +980,39 @@ createTextureImage(const vk::PhysicalDevice& physicalDevice,
     return imageBuffer;
 }
 
+void fill(void* memory, int width, int height, int depth)
+{
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dis(0, 255);
+    ImageView view(width, height, depth, memory);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            uint8_t tmp = static_cast<uint8_t>(dis(gen));
+            view(x, y, 0) = tmp;
+            view(x, y, 1) = tmp;
+            view(x, y, 2) = tmp;
+            view(x, y, 3) = 0xFF;
+        }
+    }
+}
+
+std::pair<vk::UniqueImage, vk::UniqueDeviceMemory>
+createHostVisibleTextureImage(const vk::PhysicalDevice& physicalDevice,
+                              const vk::UniqueDevice& device,
+                              const vk::Queue& queue,
+                              const vk::UniqueCommandPool& commandPool)
+{
+    auto imageBuffer = createImage(
+        physicalDevice, device, WIDTH, HEIGHT, vk::Format::eR8G8B8A8Unorm,
+        vk::ImageLayout::ePreinitialized, vk::ImageTiling::eOptimal,
+        vk::ImageUsageFlagBits::eTransferSrc,
+        vk::MemoryPropertyFlagBits::eHostVisible |
+            vk::MemoryPropertyFlagBits::eHostCoherent);
+
+    return imageBuffer;
+}
+
 void updateUbo(const vk::UniqueDevice& device,
                const vk::UniqueDeviceMemory& memory,
                const std::array<float, 3>& color)
@@ -920,10 +1026,6 @@ void copyImage(const vk::UniqueDevice& device, const vk::Queue& queue,
                const vk::UniqueCommandPool& commandPool, const vk::Image& src,
                const vk::Image& dst)
 {
-    // Dirty hack for now!  On first run, presentation images are
-    // undefined. Therefore, before first transition, oldLayout is
-    // undefined, after PresentSrc.
-    static bool first = true;
 
     vk::CommandBufferAllocateInfo allocInfo;
     allocInfo.setCommandPool(commandPool.get());
@@ -931,22 +1033,19 @@ void copyImage(const vk::UniqueDevice& device, const vk::Queue& queue,
     allocInfo.setCommandBufferCount(1);
     auto command = device->allocateCommandBuffersUnique(allocInfo);
 
-    if (first) {
-        transitionImageLayout(
-            device, queue, commandPool, dst, vk::Format::eR8G8B8A8Unorm,
-            vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
-            vk::AccessFlagBits::eMemoryRead, vk::AccessFlagBits::eTransferWrite,
-            vk::PipelineStageFlagBits::eTransfer,
-            vk::PipelineStageFlagBits::eTransfer);
-    } else {
-        transitionImageLayout(
-            device, queue, commandPool, dst, vk::Format::eR8G8B8A8Unorm,
-            vk::ImageLayout::ePresentSrcKHR,
-            vk::ImageLayout::eTransferDstOptimal,
-            vk::AccessFlagBits::eMemoryRead, vk::AccessFlagBits::eTransferWrite,
-            vk::PipelineStageFlagBits::eTransfer,
-            vk::PipelineStageFlagBits::eTransfer);
-    }
+    transitionImageLayout(
+        device, queue, commandPool, src, vk::Format::eR8G8B8A8Unorm,
+        vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferSrcOptimal,
+        vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eTransferRead,
+        vk::PipelineStageFlagBits::eTransfer,
+        vk::PipelineStageFlagBits::eTransfer);
+
+    transitionImageLayout(
+        device, queue, commandPool, dst, vk::Format::eR8G8B8A8Unorm,
+        vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+        vk::AccessFlagBits::eMemoryRead, vk::AccessFlagBits::eTransferWrite,
+        vk::PipelineStageFlagBits::eTransfer,
+        vk::PipelineStageFlagBits::eTransfer);
 
     vk::CommandBufferBeginInfo beginInfo;
     beginInfo.setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
@@ -1082,6 +1181,15 @@ int main()
         auto texture =
             createTextureImage(physicalDevice, device, queue, commandPool);
 
+        auto visibleTexture = createHostVisibleTextureImage(
+            physicalDevice, device, queue, commandPool);
+
+        void* map = device->mapMemory(visibleTexture.second.get(), 0,
+                                      WIDTH * HEIGHT * 4);
+
+        fill(map, WIDTH, HEIGHT, 4);
+        device->unmapMemory(visibleTexture.second.get());
+
         auto [renderFinished, imageAvailable] = createSemaphores(device);
 
         std::vector<std::pair<vk::UniqueBuffer, vk::UniqueDeviceMemory>>
@@ -1124,6 +1232,9 @@ int main()
         vk::FenceCreateInfo fenceInfo;
         auto fence = device->createFence(fenceInfo);
 
+        Timer<std::chrono::milliseconds> timer;
+        int counter = 0;
+
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
             uint32_t index = 0;
@@ -1134,8 +1245,23 @@ int main()
                                   std::numeric_limits<uint64_t>::max());
             device->resetFences(1, &fence);
 
-            copyImage(device, queue, commandPool, texture.first.get(),
+            void* map = device->mapMemory(visibleTexture.second.get(), 0,
+                                          WIDTH * HEIGHT * 4);
+
+            fill(map, WIDTH, HEIGHT, 4);
+            device->unmapMemory(visibleTexture.second.get());
+
+            copyImage(device, queue, commandPool, visibleTexture.first.get(),
                       swapChainImages[index]);
+
+            transitionImageLayout(
+                device, queue, commandPool, visibleTexture.first.get(),
+                vk::Format::eR8G8B8A8Unorm,
+                vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eGeneral,
+                vk::AccessFlagBits::eTransferRead,
+                vk::AccessFlagBits::eTransferRead,
+                vk::PipelineStageFlagBits::eTransfer,
+                vk::PipelineStageFlagBits::eTransfer);
 
             // updateUbo(device, buffers[index].second, colors[index]);
             // vk::SubmitInfo submitInfo;
@@ -1157,6 +1283,14 @@ int main()
             presentInfo.setPSwapchains(&swapChain.get());
             presentInfo.setPImageIndices(&index);
             queue.presentKHR(presentInfo);
+
+            if (timer.elapsed() < 1000ms) {
+                counter++;
+            } else {
+                std::cout << "fps: " << counter << std::endl;
+                timer.reset();
+                counter = 0;
+            }
         }
     }
 
