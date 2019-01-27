@@ -988,13 +988,17 @@ void fill(void* memory, int width, int height, int depth)
     ImageView view(width, height, depth, memory);
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            uint8_t tmp = static_cast<uint8_t>(dis(gen));
+            // uint8_t tmp = static_cast<uint8_t>(dis(gen));
+            uint8_t tmp = 0xFF;
             view(x, y, 0) = tmp;
             view(x, y, 1) = tmp;
             view(x, y, 2) = tmp;
             view(x, y, 3) = 0xFF;
         }
     }
+
+    // std::vector<uint32_t> data(width * height, 0xFFFFFFFF);
+    // std::memcpy(memory, data.data(), width * height * 4);
 }
 
 std::pair<vk::UniqueImage, vk::UniqueDeviceMemory>
@@ -1005,10 +1009,26 @@ createHostVisibleTextureImage(const vk::PhysicalDevice& physicalDevice,
 {
     auto imageBuffer = createImage(
         physicalDevice, device, WIDTH, HEIGHT, vk::Format::eR8G8B8A8Unorm,
-        vk::ImageLayout::ePreinitialized, vk::ImageTiling::eOptimal,
+        vk::ImageLayout::eUndefined, vk::ImageTiling::eOptimal,
         vk::ImageUsageFlagBits::eTransferSrc,
         vk::MemoryPropertyFlagBits::eHostVisible |
             vk::MemoryPropertyFlagBits::eHostCoherent);
+
+    transitionImageLayout(device, queue, commandPool, imageBuffer.first.get(),
+                          vk::Format::eR8G8B8A8Unorm,
+                          vk::ImageLayout::eUndefined,
+                          vk::ImageLayout::eGeneral, vk::AccessFlags{0},
+                          vk::AccessFlagBits::eTransferRead,
+                          vk::PipelineStageFlagBits::eTopOfPipe,
+                          vk::PipelineStageFlagBits::eTransfer);
+
+    // transitionImageLayout(
+    //     device, queue, commandPool, imageBuffer.first.get(),
+    //     vk::Format::eR8G8B8A8Unorm, vk::ImageLayout::eUndefined,
+    //     vk::ImageLayout::eGeneral, vk::AccessFlagBits::eTransferRead,
+    //     vk::AccessFlagBits::eTransferRead,
+    //     vk::PipelineStageFlagBits::eTransfer,
+    //     vk::PipelineStageFlagBits::eTransfer);
 
     return imageBuffer;
 }
@@ -1184,12 +1204,6 @@ int main()
         auto visibleTexture = createHostVisibleTextureImage(
             physicalDevice, device, queue, commandPool);
 
-        void* map = device->mapMemory(visibleTexture.second.get(), 0,
-                                      WIDTH * HEIGHT * 4);
-
-        fill(map, WIDTH, HEIGHT, 4);
-        device->unmapMemory(visibleTexture.second.get());
-
         auto [renderFinished, imageAvailable] = createSemaphores(device);
 
         std::vector<std::pair<vk::UniqueBuffer, vk::UniqueDeviceMemory>>
@@ -1237,6 +1251,18 @@ int main()
 
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
+
+            void* map = device->mapMemory(visibleTexture.second.get(), 0,
+                                          WIDTH * HEIGHT * 4);
+            fill(map, WIDTH, HEIGHT, 4);
+            vk::MappedMemoryRange range;
+            range.setMemory(visibleTexture.second.get());
+            range.setSize(WIDTH * HEIGHT * 4);
+            range.setOffset(0);
+
+            device->flushMappedMemoryRanges(1, &range);
+            device->unmapMemory(visibleTexture.second.get());
+
             uint32_t index = 0;
             device->acquireNextImageKHR(swapChain.get(),
                                         std::numeric_limits<uint64_t>::max(),
@@ -1244,12 +1270,6 @@ int main()
             device->waitForFences(1, &fence, true,
                                   std::numeric_limits<uint64_t>::max());
             device->resetFences(1, &fence);
-
-            void* map = device->mapMemory(visibleTexture.second.get(), 0,
-                                          WIDTH * HEIGHT * 4);
-
-            fill(map, WIDTH, HEIGHT, 4);
-            device->unmapMemory(visibleTexture.second.get());
 
             copyImage(device, queue, commandPool, visibleTexture.first.get(),
                       swapChainImages[index]);
