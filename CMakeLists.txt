@@ -9,6 +9,7 @@ find_package(glfw3 REQUIRED)
 add_subdirectory(glfw++)
 
 add_executable(yass src/main.cpp)
+add_executable(copy_image src/copy_image.cpp)
 
 # Build shader
 add_custom_command(TARGET yass POST_BUILD
@@ -17,4 +18,5 @@ add_custom_command(TARGET yass POST_BUILD
 
 target_compile_options(yass PRIVATE -Wall -Wextra -pedantic)    
 target_link_libraries(yass glfw++ glfw Vulkan::Vulkan)
+target_link_libraries(copy_image glfw++ glfw Vulkan::Vulkan)
 
