@@ -721,10 +721,10 @@ int main()
 
         auto commandPool = createCommandPool(device, *queueFamilyIndex);
 
-        auto [renderFinished, imageAvailable] = createSemaphores(device);
+        // auto [renderFinished, imageAvailable] = createSemaphores(device);
 
         const vk::DeviceSize imageSize = WIDTH * HEIGHT * 4;
-        const int ringBufferSegments = 4;
+        const int ringBufferSegments = 2;
 
         auto stagingBuffer =
             createBuffer(physicalDevice, device, imageSize * ringBufferSegments,
@@ -739,8 +739,11 @@ int main()
                 vk::ImageUsageFlagBits::eTransferSrc,
             vk::MemoryPropertyFlagBits::eDeviceLocal);
 
-        auto commandBuffers =
-            createCommandBuffer(physicalDevice, device, queue, commandPool, 4);
+        auto commandBuffers = createCommandBuffer(
+            physicalDevice, device, queue, commandPool, ringBufferSegments);
+
+        auto presentationBuffer = createCommandBuffer(
+            physicalDevice, device, queue, commandPool, ringBufferSegments);
 
         // std::vector<void*> mappedData(ringBufferSegments);
         void* mappedData =
@@ -757,6 +760,24 @@ int main()
             fences.push_back(device->createFence(fenceInfo));
         }
 
+        std::vector<vk::UniqueSemaphore> imageAvailable;
+        vk::SemaphoreCreateInfo semaphoreInfo;
+        for (int i = 0; i < ringBufferSegments; ++i) {
+            imageAvailable.push_back(
+                device->createSemaphoreUnique(semaphoreInfo));
+        }
+
+        std::vector<vk::UniqueSemaphore> copyReady;
+        for (int i = 0; i < ringBufferSegments; ++i) {
+            copyReady.push_back(device->createSemaphoreUnique(semaphoreInfo));
+        }
+
+        std::vector<vk::UniqueSemaphore> presentationReady;
+        for (int i = 0; i < ringBufferSegments; ++i) {
+            presentationReady.push_back(
+                device->createSemaphoreUnique(semaphoreInfo));
+        }
+
         Timer<std::chrono::milliseconds> timer;
         int counter = 0;
 
@@ -767,14 +788,16 @@ int main()
             // Get current ringbuffer index;
             const int segmentIndex = framesRendered % ringBufferSegments;
 
-            uint32_t index = 0;
-            device->acquireNextImageKHR(
-                swapChain.get(), std::numeric_limits<uint64_t>::max(),
-                vk::Semaphore{}, fences[segmentIndex], &index);
+            std::cout << "Frame: " << segmentIndex << std::endl;
 
             // Wait for fences associated with this segment
             device->waitForFences(1, &fences[segmentIndex], true,
                                   std::numeric_limits<uint64_t>::max());
+
+            uint32_t index = 0;
+            device->acquireNextImageKHR(
+                swapChain.get(), std::numeric_limits<uint64_t>::max(),
+                imageAvailable[segmentIndex].get(), vk::Fence{}, &index);
 
             // fill(mappedData * segmentIndex * imageSize, WIDTH, HEIGHT, 4);
             // Reset current command buffer
@@ -831,54 +854,74 @@ int main()
 
             commandBuffers[segmentIndex]->end();
 
-            device->resetFences(1, &fences[segmentIndex]);
             vk::SubmitInfo submitInfo;
             submitInfo.setCommandBufferCount(1);
+            submitInfo.setSignalSemaphoreCount(1);
+            submitInfo.setPSignalSemaphores(&copyReady[segmentIndex].get());
             submitInfo.setPCommandBuffers(&commandBuffers[segmentIndex].get());
-            queue.submit(1, &submitInfo, fences[segmentIndex]);
-            // // queue.waitIdle();
+            queue.submit(1, &submitInfo, vk::Fence{});
 
-            // barrier.setOldLayout(vk::ImageLayout::eUndefined);
-            // barrier.setNewLayout(vk::ImageLayout::eTransferDstOptimal);
-            // barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-            // barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-            // barrier.setImage(presentation);
-            // barrier.setSrcAccessMask(vk::AccessFlags{});
-            // barrier.setDstAccessMask(vk::AccessFlagBits::eTransferWrite);
-            // barrier.setSubresourceRange(vk::ImageSubresourceRange{
-            //     vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
-            // command.front()->pipelineBarrier(
-            //     vk::PipelineStageFlagBits::eTransfer,
-            //     vk::PipelineStageFlagBits::eTransfer, vk::DependencyFlags{},
-            //     0, nullptr, 0, nullptr, 1, &barrier);
+            presentationBuffer[segmentIndex]->reset(
+                vk::CommandBufferResetFlags{});
 
-            // vk::ImageCopy copyRegion;
-            // copyRegion.setSrcSubresource(
-            //     {vk::ImageAspectFlagBits::eColor, 0, 0, 1});
-            // copyRegion.setSrcOffset({0, 0, 0});
-            // copyRegion.setDstSubresource(
-            //     {vk::ImageAspectFlagBits::eColor, 0, 0, 1});
-            // copyRegion.setDstOffset({0, 0, 0});
-            // copyRegion.setExtent({WIDTH, HEIGHT, 1});
-            // command.front()->copyImage(
-            //     image, vk::ImageLayout::eTransferSrcOptimal, presentation,
-            //     vk::ImageLayout::eTransferDstOptimal, 1, &copyRegion);
+            presentationBuffer[segmentIndex]->begin(beginInfo);
+            barrier.setOldLayout(vk::ImageLayout::eUndefined);
+            barrier.setNewLayout(vk::ImageLayout::eTransferDstOptimal);
+            barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
+            barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
+            barrier.setImage(swapChainImages[index]);
+            barrier.setSrcAccessMask(vk::AccessFlags{});
+            barrier.setDstAccessMask(vk::AccessFlagBits::eTransferWrite);
+            barrier.setSubresourceRange(vk::ImageSubresourceRange{
+                vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
+            presentationBuffer[segmentIndex]->pipelineBarrier(
+                vk::PipelineStageFlagBits::eTransfer,
+                vk::PipelineStageFlagBits::eTransfer, vk::DependencyFlags{}, 0,
+                nullptr, 0, nullptr, 1, &barrier);
 
-            // barrier.setOldLayout(vk::ImageLayout::eTransferDstOptimal);
-            // barrier.setNewLayout(vk::ImageLayout::ePresentSrcKHR);
-            // barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-            // barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-            // barrier.setImage(presentation);
-            // barrier.setSrcAccessMask(vk::AccessFlagBits::eTransferWrite);
-            // barrier.setDstAccessMask(vk::AccessFlagBits::eMemoryRead);
-            // barrier.setSubresourceRange(vk::ImageSubresourceRange{
-            //     vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
-            // command.front()->pipelineBarrier(
-            //     vk::PipelineStageFlagBits::eTransfer,
-            //     vk::PipelineStageFlagBits::eBottomOfPipe,
-            //     vk::DependencyFlags{}, 0, nullptr, 0, nullptr, 1, &barrier);
-            // command.front()->end();
+            vk::ImageCopy copyRegion;
+            copyRegion.setSrcSubresource(
+                {vk::ImageAspectFlagBits::eColor, 0, 0, 1});
+            copyRegion.setSrcOffset({0, 0, 0});
+            copyRegion.setDstSubresource(
+                {vk::ImageAspectFlagBits::eColor, 0, 0, 1});
+            copyRegion.setDstOffset({0, 0, 0});
+            copyRegion.setExtent({WIDTH, HEIGHT, 1});
+            presentationBuffer[segmentIndex]->copyImage(
+                imageBuffer.first.get(), vk::ImageLayout::eTransferSrcOptimal,
+                swapChainImages[index], vk::ImageLayout::eTransferDstOptimal, 1,
+                &copyRegion);
 
+            barrier.setOldLayout(vk::ImageLayout::eTransferDstOptimal);
+            barrier.setNewLayout(vk::ImageLayout::ePresentSrcKHR);
+            barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
+            barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
+            barrier.setImage(swapChainImages[index]);
+            barrier.setSrcAccessMask(vk::AccessFlagBits::eTransferWrite);
+            barrier.setDstAccessMask(vk::AccessFlagBits::eMemoryRead);
+            barrier.setSubresourceRange(vk::ImageSubresourceRange{
+                vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
+            presentationBuffer[segmentIndex]->pipelineBarrier(
+                vk::PipelineStageFlagBits::eTransfer,
+                vk::PipelineStageFlagBits::eBottomOfPipe, vk::DependencyFlags{},
+                0, nullptr, 0, nullptr, 1, &barrier);
+            presentationBuffer[segmentIndex]->end();
+
+            device->resetFences(1, &fences[segmentIndex]);
+
+            vk::SubmitInfo submitRenderInfo;
+            submitInfo.setCommandBufferCount(1);
+            submitInfo.setWaitSemaphoreCount(2);
+            vk::Semaphore waitSemaphore[] = {
+                copyReady[segmentIndex].get(),
+                imageAvailable[segmentIndex].get()};
+            submitInfo.setPWaitSemaphores(&waitSemaphore[0]);
+
+            // submitInfo.setPSignalSemaphores(
+            //     &presentationReady[segmentIndex].get());
+            submitInfo.setPCommandBuffers(
+                &presentationBuffer[segmentIndex].get());
+            queue.submit(1, &submitRenderInfo, fences[segmentIndex]);
             // uint32_t index = 0;
             // device->acquireNextImageKHR(swapChain.get(),
             //                             std::numeric_limits<uint64_t>::max(),
@@ -893,14 +936,15 @@ int main()
             // queue.submit(1, &submitInfo, vk::Fence{});
             // // queue.waitIdle();
 
-            // vk::PresentInfoKHR presentInfo;
-            // presentInfo.setWaitSemaphoreCount(0);
-            // presentInfo.setPWaitSemaphores(nullptr);
-            // presentInfo.setSwapchainCount(1);
-            // presentInfo.setPSwapchains(&swapChain.get());
-            // presentInfo.setPImageIndices(&index);
-            // queue.presentKHR(presentInfo);
-
+            vk::PresentInfoKHR presentInfo;
+            presentInfo.setWaitSemaphoreCount(0);
+            // presentInfo.setPWaitSemaphores(
+            //     &presentationReady[segmentIndex].get());
+            presentInfo.setSwapchainCount(1);
+            presentInfo.setPSwapchains(&swapChain.get());
+            presentInfo.setPImageIndices(&index);
+            queue.presentKHR(presentInfo);
+            framesRendered++;
             if (timer.elapsed() < 1000ms) {
                 counter++;
             } else {
