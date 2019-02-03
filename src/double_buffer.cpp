@@ -646,6 +646,13 @@ void fill(void* memory, int width, int height, int depth)
     }
 }
 
+void fill(uint32_t* memory, int width, int height)
+{
+    for (int i = 0; i < width * height; ++i) {
+        memory[i] = 0xFF0000FF;
+    }
+}
+
 int main()
 {
     glfwInit();
@@ -788,26 +795,35 @@ int main()
             // Get current ringbuffer index;
             const int segmentIndex = framesRendered % ringBufferSegments;
 
-            std::cout << "Frame: " << segmentIndex << std::endl;
-
             // Wait for fences associated with this segment
             device->waitForFences(1, &fences[segmentIndex], true,
                                   std::numeric_limits<uint64_t>::max());
 
+            // Get current images to present
             uint32_t index = 0;
             device->acquireNextImageKHR(
                 swapChain.get(), std::numeric_limits<uint64_t>::max(),
                 imageAvailable[segmentIndex].get(), vk::Fence{}, &index);
 
-            // fill(mappedData * segmentIndex * imageSize, WIDTH, HEIGHT, 4);
-            // Reset current command buffer
+            // Fill ring buffer segment with new data
+            fill(reinterpret_cast<uint32_t*>(mappedData) +
+                     WIDTH * HEIGHT * segmentIndex,
+                 WIDTH, HEIGHT);
+
+            // Reset current command buffer to record new data. Since
+            // we are waiting for fence associated with segment
+            // `segmentIndex`, we now, that this command buffer is
+            // currently not in use.
             commandBuffers[segmentIndex]->reset(vk::CommandBufferResetFlags{});
 
+            // Start recording
             vk::CommandBufferBeginInfo beginInfo;
             beginInfo.setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
             commandBuffers[segmentIndex]->begin(beginInfo);
 
-            // Copy staging buffer to image
+            // Copy staging buffer to image. In order to do so,
+            // transition to correct image layout
+            // (eTransferDstOptimal) with barrier.
             vk::ImageMemoryBarrier barrier;
             barrier.setOldLayout(vk::ImageLayout::eUndefined);
             barrier.setNewLayout(vk::ImageLayout::eTransferDstOptimal);
@@ -818,12 +834,13 @@ int main()
             barrier.setDstAccessMask(vk::AccessFlagBits::eTransferWrite);
             barrier.setSubresourceRange(vk::ImageSubresourceRange{
                 vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
-
             commandBuffers[segmentIndex]->pipelineBarrier(
                 vk::PipelineStageFlagBits::eTopOfPipe,
                 vk::PipelineStageFlagBits::eTransfer, vk::DependencyFlags{}, 0,
                 nullptr, 0, nullptr, 1, &barrier);
 
+            // Configure copy operation. Copy part of staging buffer
+            // which is associated by the current segment index.
             vk::BufferImageCopy region;
             region.setBufferOffset(segmentIndex * imageSize);
             region.setBufferRowLength(0);
@@ -832,11 +849,12 @@ int main()
                 vk::ImageAspectFlagBits::eColor, 0, 0, 1});
             region.setImageOffset({0, 0, 0});
             region.setImageExtent({WIDTH, HEIGHT, 1});
-
             commandBuffers[segmentIndex]->copyBufferToImage(
                 stagingBuffer.first.get(), imageBuffer.first.get(),
                 vk::ImageLayout::eTransferDstOptimal, 1, &region);
 
+            // Transition layout of image to src, because in the next
+            // operation we will copy this image to the presentation image.
             barrier.setOldLayout(vk::ImageLayout::eTransferDstOptimal);
             barrier.setNewLayout(vk::ImageLayout::eTransferSrcOptimal);
             barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
@@ -852,8 +870,11 @@ int main()
                 vk::PipelineStageFlagBits::eTransfer, vk::DependencyFlags{}, 0,
                 nullptr, 0, nullptr, 1, &barrier);
 
+            // End recording
             commandBuffers[segmentIndex]->end();
 
+            // Submit buffer. Signal, that copy of staging buffer to
+            // image is ready by using a semaphore.
             vk::SubmitInfo submitInfo;
             submitInfo.setCommandBufferCount(1);
             submitInfo.setSignalSemaphoreCount(1);
@@ -861,9 +882,13 @@ int main()
             submitInfo.setPCommandBuffers(&commandBuffers[segmentIndex].get());
             queue.submit(1, &submitInfo, vk::Fence{});
 
+            // Reset presentation buffer to record new set of
+            // commands. These commands will copy the image to the
+            // current presentation image.
             presentationBuffer[segmentIndex]->reset(
                 vk::CommandBufferResetFlags{});
 
+            // Transfer current swap chain image to destination layout.
             presentationBuffer[segmentIndex]->begin(beginInfo);
             barrier.setOldLayout(vk::ImageLayout::eUndefined);
             barrier.setNewLayout(vk::ImageLayout::eTransferDstOptimal);
@@ -879,6 +904,7 @@ int main()
                 vk::PipelineStageFlagBits::eTransfer, vk::DependencyFlags{}, 0,
                 nullptr, 0, nullptr, 1, &barrier);
 
+            // Configure copy operation
             vk::ImageCopy copyRegion;
             copyRegion.setSrcSubresource(
                 {vk::ImageAspectFlagBits::eColor, 0, 0, 1});
@@ -892,6 +918,7 @@ int main()
                 swapChainImages[index], vk::ImageLayout::eTransferDstOptimal, 1,
                 &copyRegion);
 
+            // Transfer current swapimage to ePresetnSrcKHR
             barrier.setOldLayout(vk::ImageLayout::eTransferDstOptimal);
             barrier.setNewLayout(vk::ImageLayout::ePresentSrcKHR);
             barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
@@ -907,44 +934,44 @@ int main()
                 0, nullptr, 0, nullptr, 1, &barrier);
             presentationBuffer[segmentIndex]->end();
 
+            // Reset current fence
             device->resetFences(1, &fences[segmentIndex]);
 
+            // Submit operation. Wait with execution until copy of
+            // staging buffer is ready and image from swap chain is
+            // avaiable. Wait in transfer stage of pipeline.
             vk::SubmitInfo submitRenderInfo;
-            submitInfo.setCommandBufferCount(1);
-            submitInfo.setWaitSemaphoreCount(2);
+            submitRenderInfo.setCommandBufferCount(1);
+            submitRenderInfo.setWaitSemaphoreCount(2);
             vk::Semaphore waitSemaphore[] = {
                 copyReady[segmentIndex].get(),
                 imageAvailable[segmentIndex].get()};
-            submitInfo.setPWaitSemaphores(&waitSemaphore[0]);
-
-            // submitInfo.setPSignalSemaphores(
-            //     &presentationReady[segmentIndex].get());
-            submitInfo.setPCommandBuffers(
+            vk::PipelineStageFlags stages[] = {
+                vk::PipelineStageFlagBits::eTransfer,
+                vk::PipelineStageFlagBits::eTransfer};
+            submitRenderInfo.setPWaitDstStageMask(&stages[0]);
+            submitRenderInfo.setPWaitSemaphores(&waitSemaphore[0]);
+            submitInfo.setPSignalSemaphores(
+                &presentationReady[segmentIndex].get());
+            submitRenderInfo.setPCommandBuffers(
                 &presentationBuffer[segmentIndex].get());
             queue.submit(1, &submitRenderInfo, fences[segmentIndex]);
-            // uint32_t index = 0;
-            // device->acquireNextImageKHR(swapChain.get(),
-            //                             std::numeric_limits<uint64_t>::max(),
-            //                             vk::Semaphore{}, fence, &index);
-            // device->waitForFences(1, &fence, true,
-            //                       std::numeric_limits<uint64_t>::max());
-            // device->resetFences(1, &fence);
 
-            // vk::SubmitInfo submitInfo;
-            // submitInfo.setCommandBufferCount(1);
-            // submitInfo.setPCommandBuffers(&commandBuffers[index].get());
-            // queue.submit(1, &submitInfo, vk::Fence{});
-            // // queue.waitIdle();
-
+            // Present current image. Wait with execution until copy
+            // avaiable. Wait in transfer stage of pipelineoperation
+            // avaiable. Wait in transfer stage of pipelineof image to
+            // avaiable. Wait in transfer stage of pipelineswapChainImage
+            // avaiable. Wait in transfer stage of pipelineis ready.
             vk::PresentInfoKHR presentInfo;
             presentInfo.setWaitSemaphoreCount(0);
-            // presentInfo.setPWaitSemaphores(
-            //     &presentationReady[segmentIndex].get());
+            presentInfo.setPWaitSemaphores(
+                &presentationReady[segmentIndex].get());
             presentInfo.setSwapchainCount(1);
             presentInfo.setPSwapchains(&swapChain.get());
             presentInfo.setPImageIndices(&index);
             queue.presentKHR(presentInfo);
             framesRendered++;
+
             if (timer.elapsed() < 1000ms) {
                 counter++;
             } else {
