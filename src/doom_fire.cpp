@@ -541,12 +541,16 @@ void initializeFire(std::vector<int>& buffer, int width, int height)
 
 void updateFire(std::vector<int>& buffer, int width, int height)
 {
+    // std::default_random_engine gen;
+    // std::uniform_int_distribution<int> dist(0, 1);
 
-    auto spreadFire = [&buffer, width](int src) {
+    std::default_random_engine gen;
+    std::bernoulli_distribution dist(0.1);
+    auto spreadFire = [&buffer, &dist, &gen, width](int src) {
         int r = static_cast<int>(
             std::round((static_cast<float>(rand()) / (RAND_MAX)) * 3.0));
         int dst = src - r + 1;
-        buffer[dst] = buffer[src + width] - (r & 1);
+        buffer[dst] = buffer[src + width] - dist(gen);
     };
     for (int x = 0; x < width; ++x) {
         for (int y = 1; y < height; ++y) {
