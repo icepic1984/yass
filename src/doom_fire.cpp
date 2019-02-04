@@ -6,6 +6,7 @@
 #include <GLFW/glfw3.h>
 #include <fstream>
 #include <iostream>
+#include <cstdlib>
 
 std::array<uint32_t, 37> firePalette = {
     0xFF000000, 0xFF070707, 0xFF1f0707, 0xFF2f0f07, 0xFF470f07, 0xFF571707,
@@ -104,6 +105,8 @@ const bool enableValidationLayer = true;
 
 const int WIDTH = 800;
 const int HEIGHT = 600;
+
+std::vector<int> doomFire(WIDTH* HEIGHT, 0);
 
 // clang-format off
 const std::vector<const char*> validationLayers{
@@ -527,15 +530,38 @@ createCommandBuffer(const vk::PhysicalDevice& physicalDevice,
     return device->allocateCommandBuffersUnique(allocInfo);
 }
 
-void fill(uint32_t* memory, uint32_t color, int width, int height)
+void initializeFire(std::vector<int>& buffer, int width, int height)
 {
-    for (int i = 0; i < width * height; ++i) {
-        memory[i] = color;
+    for (int y = 0; y < 1; ++y) {
+        for (int x = 0; x < width; ++x) {
+            buffer[(height - y - 1) * width + x] = 36;
+        }
     }
-    memory[0] = 0xFFFFFFFF;
-    memory[0 * width + width - 1] = 0xFFFF0000;
-    memory[(height - 1) * width + 0] = 0xFF00FF00;
-    memory[(height - 1) * width + width - 1] = 0xFF0000FF;
+}
+
+void updateFire(std::vector<int>& buffer, int width, int height)
+{
+
+    auto spreadFire = [&buffer, width](int src) {
+        int r = static_cast<int>(
+            std::round((static_cast<float>(rand()) / (RAND_MAX)) * 5.0));
+        int dst = src - r + 2;
+        buffer[dst - width] = buffer[src] - (r & 1);
+    };
+    for (int x = 0; x < width; ++x) {
+        for (int y = 1; y < height; ++y) {
+            spreadFire((height - 1 - y) * width + x);
+        }
+    }
+}
+
+void fillFire(const std::vector<int>& buffer, uint32_t* memory, int width,
+              int height)
+{
+
+    for (int i = 0; i < width * height; ++i) {
+        memory[i] = buffer[i] < 0 ? 0 : firePalette[buffer[i]];
+    }
 }
 
 int main()
@@ -637,12 +663,8 @@ int main()
         auto presentationBuffer = createCommandBuffer(
             physicalDevice, device, queue, commandPool, ringBufferSegments);
 
-        // std::vector<void*> mappedData(ringBufferSegments);
         void* mappedData =
             device->mapMemory(stagingBuffer.second.get(), 0, imageSize);
-        // for (int i = 0; i < ringBufferSegments; ++i) {
-        //     mappedData[i] =
-        // }
 
         // Create fences
         vk::FenceCreateInfo fenceInfo;
@@ -674,8 +696,11 @@ int main()
         int counter = 0;
 
         int framesRendered = 0;
+
+        initializeFire(doomFire, WIDTH, HEIGHT);
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
+            updateFire(doomFire, WIDTH, HEIGHT);
 
             // Get current ringbuffer index;
             const int segmentIndex = framesRendered % ringBufferSegments;
@@ -690,9 +715,11 @@ int main()
                 swapChain.get(), std::numeric_limits<uint64_t>::max(),
                 imageAvailable[segmentIndex].get(), vk::Fence{}, &index);
 
-            fill(reinterpret_cast<uint32_t*>(mappedData) +
-                     WIDTH * HEIGHT * segmentIndex,
-                 0x00000000, WIDTH, HEIGHT);
+            fillFire(doomFire,
+                     reinterpret_cast<uint32_t*>(mappedData) +
+                         WIDTH * HEIGHT * segmentIndex,
+                     WIDTH, HEIGHT);
+
             // Reset current command buffer to record new data. Since
             // we are waiting for fence associated with segment
             // `segmentIndex`, we now, that this command buffer is
