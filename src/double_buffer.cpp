@@ -626,30 +626,30 @@ vk::UniqueCommandBuffer updateTexture(const vk::PhysicalDevice& physicalDevice,
     return std::move(command.front());
 }
 
-void fill(void* memory, int width, int height, int depth)
-{
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> dis(0, 255);
-    ImageView view(width, height, depth, memory);
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            uint8_t r = static_cast<uint8_t>(dis(gen));
-            uint8_t g = static_cast<uint8_t>(dis(gen));
-            uint8_t b = static_cast<uint8_t>(dis(gen));
-            // uint8_t tmp = 0xFF;
-            view(x, y, 0) = r;
-            view(x, y, 1) = g;
-            view(x, y, 2) = b;
-            view(x, y, 3) = 0xFF;
-        }
-    }
-}
+// void fill(void* memory, int width, int height, int depth)
+// {
+//     std::random_device rd;
+//     std::mt19937 gen(rd());
+//     std::uniform_int_distribution<> dis(0, 255);
+//     ImageView view(width, height, depth, memory);
+//     for (int y = 0; y < height; ++y) {
+//         for (int x = 0; x < width; ++x) {
+//             uint8_t r = static_cast<uint8_t>(dis(gen));
+//             uint8_t g = static_cast<uint8_t>(dis(gen));
+//             uint8_t b = static_cast<uint8_t>(dis(gen));
+//             // uint8_t tmp = 0xFF;
+//             view(x, y, 0) = r;
+//             view(x, y, 1) = g;
+//             view(x, y, 2) = b;
+//             view(x, y, 3) = 0xFF;
+//         }
+//     }
+// }
 
-void fill(uint32_t* memory, int width, int height)
+void fill(uint32_t* memory, uint32_t color, int width, int height)
 {
     for (int i = 0; i < width * height; ++i) {
-        memory[i] = 0xFF0000FF;
+        memory[i] = color;
     }
 }
 
@@ -806,9 +806,19 @@ int main()
                 imageAvailable[segmentIndex].get(), vk::Fence{}, &index);
 
             // Fill ring buffer segment with new data
-            fill(reinterpret_cast<uint32_t*>(mappedData) +
-                     WIDTH * HEIGHT * segmentIndex,
-                 WIDTH, HEIGHT);
+            if (timer.elapsed() < 250ms) {
+                fill(reinterpret_cast<uint32_t*>(mappedData) +
+                         WIDTH * HEIGHT * segmentIndex,
+                     0xFF0000FF, WIDTH, HEIGHT);
+            } else if (timer.elapsed() < 500ms) {
+                fill(reinterpret_cast<uint32_t*>(mappedData) +
+                         WIDTH * HEIGHT * segmentIndex,
+                     0xFF00FF00, WIDTH, HEIGHT);
+            } else {
+                fill(reinterpret_cast<uint32_t*>(mappedData) +
+                         WIDTH * HEIGHT * segmentIndex,
+                     0xFFFF0000, WIDTH, HEIGHT);
+            }
 
             // Reset current command buffer to record new data. Since
             // we are waiting for fence associated with segment
