@@ -544,9 +544,9 @@ void updateFire(std::vector<int>& buffer, int width, int height)
 
     auto spreadFire = [&buffer, width](int src) {
         int r = static_cast<int>(
-            std::round((static_cast<float>(rand()) / (RAND_MAX)) * 5.0));
-        int dst = src - r + 2;
-        buffer[dst - width] = buffer[src] - (r & 1);
+            std::round((static_cast<float>(rand()) / (RAND_MAX)) * 3.0));
+        int dst = src - r + 1;
+        buffer[dst] = buffer[src + width] - (r & 1);
     };
     for (int x = 0; x < width; ++x) {
         for (int y = 1; y < height; ++y) {
