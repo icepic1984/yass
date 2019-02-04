@@ -530,20 +530,30 @@ createCommandBuffer(const vk::PhysicalDevice& physicalDevice,
     return device->allocateCommandBuffersUnique(allocInfo);
 }
 
-void initializeFire(std::vector<int>& buffer, int width, int height)
+void controlFire(std::vector<int>& buffer, int value, int width, int height)
 {
     for (int y = 0; y < 1; ++y) {
         for (int x = 0; x < width; ++x) {
-            buffer[(height - y - 1) * width + x] = 36;
+            buffer[(height - y - 1) * width + x] = value;
         }
     }
 }
 
+void startFire(std::vector<int>& buffer, int width, int height)
+{
+    const int fuel = 36;
+    controlFire(buffer, fuel, width, height);
+}
+
+void killFire(std::vector<int>& buffer, int width, int height)
+{
+    const int water = 0;
+    controlFire(buffer, water, width, height);
+}
 void updateFire(std::vector<int>& buffer, int width, int height)
 {
     // std::default_random_engine gen;
     // std::uniform_int_distribution<int> dist(0, 1);
-
     std::default_random_engine gen;
     std::bernoulli_distribution dist(0.1);
     auto spreadFire = [&buffer, &dist, &gen, width](int src) {
@@ -701,9 +711,21 @@ int main()
 
         int framesRendered = 0;
 
-        initializeFire(doomFire, WIDTH, HEIGHT);
+        startFire(doomFire, WIDTH, HEIGHT);
+        bool burning = true;
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
+            int state = glfwGetKey(window, GLFW_KEY_SPACE);
+            if (state == GLFW_PRESS) {
+                if (!burning) {
+                    startFire(doomFire, WIDTH, HEIGHT);
+                    burning = true;
+                } else {
+                    killFire(doomFire, WIDTH, HEIGHT);
+                    burning = false;
+                }
+            }
+
             updateFire(doomFire, WIDTH, HEIGHT);
 
             // Get current ringbuffer index;
