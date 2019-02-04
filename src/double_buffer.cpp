@@ -5,6 +5,8 @@
 #include <glfw.hpp>
 #include <GLFW/glfw3.h>
 #include <fstream>
+#include <iostream>
+
 using namespace std::chrono_literals;
 
 template <typename T> class Timer {
@@ -433,15 +435,6 @@ vk::UniqueCommandPool createCommandPool(const vk::UniqueDevice& device,
     return device->createCommandPoolUnique(commandPoolInfo);
 }
 
-std::pair<vk::UniqueSemaphore, vk::UniqueSemaphore>
-createSemaphores(const vk::UniqueDevice& device)
-{
-    vk::SemaphoreCreateInfo semaphoreCreateInfo;
-
-    return std::make_pair(device->createSemaphoreUnique(semaphoreCreateInfo),
-                          device->createSemaphoreUnique(semaphoreCreateInfo));
-}
-
 uint32_t findMemoryType(const vk::PhysicalDevice& physicalDevice,
                         uint32_t typeFilter, vk::MemoryPropertyFlags properties)
 {
@@ -524,127 +517,6 @@ createCommandBuffer(const vk::PhysicalDevice& physicalDevice,
     allocInfo.setCommandBufferCount(number);
     return device->allocateCommandBuffersUnique(allocInfo);
 }
-
-vk::UniqueCommandBuffer updateTexture(const vk::PhysicalDevice& physicalDevice,
-                                      const vk::UniqueDevice& device,
-                                      const vk::Queue& queue,
-                                      const vk::UniqueCommandPool& commandPool,
-                                      vk::Buffer staging, vk::Image image,
-                                      vk::Image presentation)
-
-{
-    vk::CommandBufferAllocateInfo allocInfo;
-    allocInfo.setCommandPool(commandPool.get());
-    allocInfo.setLevel(vk::CommandBufferLevel::ePrimary);
-    allocInfo.setCommandBufferCount(1);
-    auto command = device->allocateCommandBuffersUnique(allocInfo);
-
-    vk::CommandBufferBeginInfo beginInfo;
-    beginInfo.setFlags(vk::CommandBufferUsageFlagBits::eSimultaneousUse);
-    command.front()->begin(beginInfo);
-
-    vk::ImageMemoryBarrier barrier;
-    barrier.setOldLayout(vk::ImageLayout::eUndefined);
-    barrier.setNewLayout(vk::ImageLayout::eTransferDstOptimal);
-    barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-    barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-    barrier.setImage(image);
-    barrier.setSrcAccessMask(vk::AccessFlags{0});
-    barrier.setDstAccessMask(vk::AccessFlagBits::eTransferWrite);
-    barrier.setSubresourceRange(
-        vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
-
-    command.front()->pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
-                                     vk::PipelineStageFlagBits::eTransfer,
-                                     vk::DependencyFlags{}, 0, nullptr, 0,
-                                     nullptr, 1, &barrier);
-    vk::BufferImageCopy region;
-    region.setBufferOffset(0);
-    region.setBufferRowLength(0);
-    region.setBufferImageHeight(0);
-    region.setImageSubresource(
-        vk::ImageSubresourceLayers{vk::ImageAspectFlagBits::eColor, 0, 0, 1});
-    region.setImageOffset({0, 0, 0});
-    region.setImageExtent({WIDTH, HEIGHT, 1});
-
-    command.front()->copyBufferToImage(
-        staging, image, vk::ImageLayout::eTransferDstOptimal, 1, &region);
-
-    barrier.setOldLayout(vk::ImageLayout::eTransferDstOptimal);
-    barrier.setNewLayout(vk::ImageLayout::eTransferSrcOptimal);
-    barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-    barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-    barrier.setImage(image);
-    barrier.setSrcAccessMask(vk::AccessFlagBits::eTransferWrite);
-    barrier.setDstAccessMask(vk::AccessFlagBits::eTransferRead);
-    barrier.setSubresourceRange(
-        vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
-
-    command.front()->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
-                                     vk::PipelineStageFlagBits::eTransfer,
-                                     vk::DependencyFlags{}, 0, nullptr, 0,
-                                     nullptr, 1, &barrier);
-
-    barrier.setOldLayout(vk::ImageLayout::eUndefined);
-    barrier.setNewLayout(vk::ImageLayout::eTransferDstOptimal);
-    barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-    barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-    barrier.setImage(presentation);
-    barrier.setSrcAccessMask(vk::AccessFlags{});
-    barrier.setDstAccessMask(vk::AccessFlagBits::eTransferWrite);
-    barrier.setSubresourceRange(
-        vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
-    command.front()->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
-                                     vk::PipelineStageFlagBits::eTransfer,
-                                     vk::DependencyFlags{}, 0, nullptr, 0,
-                                     nullptr, 1, &barrier);
-
-    vk::ImageCopy copyRegion;
-    copyRegion.setSrcSubresource({vk::ImageAspectFlagBits::eColor, 0, 0, 1});
-    copyRegion.setSrcOffset({0, 0, 0});
-    copyRegion.setDstSubresource({vk::ImageAspectFlagBits::eColor, 0, 0, 1});
-    copyRegion.setDstOffset({0, 0, 0});
-    copyRegion.setExtent({WIDTH, HEIGHT, 1});
-    command.front()->copyImage(
-        image, vk::ImageLayout::eTransferSrcOptimal, presentation,
-        vk::ImageLayout::eTransferDstOptimal, 1, &copyRegion);
-
-    barrier.setOldLayout(vk::ImageLayout::eTransferDstOptimal);
-    barrier.setNewLayout(vk::ImageLayout::ePresentSrcKHR);
-    barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-    barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-    barrier.setImage(presentation);
-    barrier.setSrcAccessMask(vk::AccessFlagBits::eTransferWrite);
-    barrier.setDstAccessMask(vk::AccessFlagBits::eMemoryRead);
-    barrier.setSubresourceRange(
-        vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
-    command.front()->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
-                                     vk::PipelineStageFlagBits::eBottomOfPipe,
-                                     vk::DependencyFlags{}, 0, nullptr, 0,
-                                     nullptr, 1, &barrier);
-    command.front()->end();
-    return std::move(command.front());
-}
-
-// void fill(void* memory, int width, int height, int depth)
-// {
-//     std::random_device rd;
-//     std::mt19937 gen(rd());
-//     std::uniform_int_distribution<> dis(0, 255);
-//     ImageView view(width, height, depth, memory);
-//     for (int y = 0; y < height; ++y) {
-//         for (int x = 0; x < width; ++x) {
-//             uint8_t r = static_cast<uint8_t>(dis(gen));
-//             uint8_t g = static_cast<uint8_t>(dis(gen));
-//             uint8_t b = static_cast<uint8_t>(dis(gen));
-//             // uint8_t tmp = 0xFF;
-//             view(x, y, 0) = r;
-//             view(x, y, 1) = g;
-//             view(x, y, 2) = b;
-//             view(x, y, 3) = 0xFF;
-//         }
-//     }
-// }
 
 void fill(uint32_t* memory, uint32_t color, int width, int height)
 {
@@ -752,12 +624,8 @@ int main()
         auto presentationBuffer = createCommandBuffer(
             physicalDevice, device, queue, commandPool, ringBufferSegments);
 
-        // std::vector<void*> mappedData(ringBufferSegments);
         void* mappedData =
             device->mapMemory(stagingBuffer.second.get(), 0, imageSize);
-        // for (int i = 0; i < ringBufferSegments; ++i) {
-        //     mappedData[i] =
-        // }
 
         // Create fences
         vk::FenceCreateInfo fenceInfo;
