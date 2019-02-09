@@ -20,6 +20,8 @@ public:
 
     int height() const;
 
+    bool running() const;
+
     bool burning() const;
 
     void copy(uint32_t* memory) const;
@@ -32,7 +34,11 @@ public:
 
     bool start();
 
-    bool kill();
+    bool stop();
+
+    void light();
+
+    void kill();
 
 private:
     void update();
@@ -50,6 +56,8 @@ private:
     const int m_maxRange = 1;
 
     std::vector<int> m_currentFrame;
+
+    std::atomic<bool> m_running = false;
 
     std::atomic<bool> m_burning = false;
 

@@ -26,6 +26,11 @@ int Fire::height() const
     return m_height;
 }
 
+bool Fire::running() const
+{
+    return m_running;
+}
+
 bool Fire::burning() const
 {
     return m_burning;
@@ -43,10 +48,10 @@ void Fire::copy(uint32_t* memory) const
 
 bool Fire::start()
 {
-    if (burning()) {
+    if (running()) {
         return false;
     } else {
-        m_burning = true;
+        m_running = true;
         m_thread = std::thread(&Fire::update, this);
         return true;
     }
@@ -70,13 +75,27 @@ double Fire::propane()
     return m_propane;
 }
 
-bool Fire::kill()
+bool Fire::stop()
 {
-    if (!burning()) {
+    if (!running()) {
         return false;
     } else {
-        m_burning = false;
+        m_running = false;
         return true;
+    }
+}
+
+void Fire::kill()
+{
+    if (burning()) {
+        m_burning = false;
+    }
+}
+
+void Fire::light()
+{
+    if (!burning()) {
+        m_burning = true;
     }
 }
 
@@ -88,13 +107,6 @@ void Fire::update()
 
     std::vector<int> buffer(m_width * m_height, 0);
 
-    // Start fire
-    for (int x = 0; x < m_width; ++x) {
-        for (int y = 0; y < 1; ++y) {
-            buffer[(m_height - y - 1) * m_width + x] = 36;
-        }
-    }
-
     // // Spread function
     auto spreadFire = [this, &bern, &uniform, &gen, &buffer](int src) {
         int dst = src + uniform(gen);
@@ -104,7 +116,14 @@ void Fire::update()
     // Update frame
     Timer<std::chrono::milliseconds> t;
     int counter = 0;
-    while (burning()) {
+    while (running()) {
+        // Start fire
+        for (int x = 0; x < m_width; ++x) {
+            for (int y = 0; y < 1; ++y) {
+                buffer[(m_height - y - 1) * m_width + x] = m_burning ? 36 : 0;
+            }
+        }
+
         for (int x = 0; x < m_width; ++x) {
             for (int y = 1; y < m_height - std::abs(m_minRange); ++y) {
                 spreadFire((m_height - 1 - y) * m_width + x);

@@ -582,13 +582,21 @@ int main()
         fire.start();
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
-            int state = glfwGetKey(window, GLFW_KEY_SPACE);
+            int state = glfwGetKey(window, GLFW_KEY_J);
+            if (state == GLFW_PRESS) {
+                fire.dec();
+            }
+            state = glfwGetKey(window, GLFW_KEY_K);
             if (state == GLFW_PRESS) {
                 fire.inc();
             }
-            state = glfwGetKey(window, GLFW_KEY_A);
+            state = glfwGetKey(window, GLFW_KEY_SPACE);
             if (state == GLFW_PRESS) {
-                fire.dec();
+                fire.light();
+            }
+            state = glfwGetKey(window, GLFW_KEY_ENTER);
+            if (state == GLFW_PRESS) {
+                fire.kill();
             }
 
             // Get current ringbuffer index;
@@ -772,7 +780,7 @@ int main()
             if (timer.elapsed() < 1000ms) {
                 counter++;
             } else {
-                // std::cout << "fps: " << counter << std::endl;
+                std::cout << "fps: " << counter << std::endl;
                 timer.reset();
                 counter = 0;
             }
