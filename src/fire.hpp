@@ -53,7 +53,7 @@ private:
 
     const int m_minRange = -2;
 
-    const int m_maxRange = 1;
+    const int m_maxRange = 2;
 
     std::vector<int> m_currentFrame;
 
