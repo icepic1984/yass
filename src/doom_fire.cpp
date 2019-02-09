@@ -7,6 +7,14 @@
 #include <fstream>
 #include <iostream>
 #include <cstdlib>
+#include <array>
+#include <algorithm>
+#include <cstdint>
+#include <iostream>
+#include <optional>
+#include <limits>
+#include <vector>
+#include "timer.hpp"
 
 std::array<uint32_t, 37> firePalette = {
     0xFF000000, 0xFF070707, 0xFF1f0707, 0xFF2f0f07, 0xFF470f07, 0xFF571707,
@@ -17,89 +25,10 @@ std::array<uint32_t, 37> firePalette = {
     0xFFB7AF2F, 0xFFB7B72F, 0xFFB7B737, 0xFFCFCF6F, 0xFFDFDF9F, 0xFFEFEFC7,
     0xFFFFFFFF};
 
-using namespace std::chrono_literals;
-
-template <typename T> class Timer {
-public:
-    Timer() : m_start(std::chrono::system_clock::now())
-    {
-    }
-
-    T elapsed()
-    {
-        return std::chrono::duration_cast<T>(std::chrono::system_clock::now() -
-                                             m_start);
-    }
-
-    void reset()
-    {
-        m_start = std::chrono::system_clock::now();
-    }
-
-private:
-    std::chrono::time_point<std::chrono::system_clock> m_start;
-};
-
-struct Rgba {
-    uint8_t r;
-    uint8_t g;
-    uint8_t b;
-    uint8_t a;
-};
-
-class ImageView {
-public:
-    ImageView(int width, int height, int depth, void* memory)
-        : m_width(width), m_height(height), m_depth(depth),
-          m_memory(static_cast<uint8_t*>(memory))
-    {
-    }
-
-    uint8_t& operator()(int x, int y, int d)
-    {
-        return m_memory[y * m_width * m_depth + (x * m_depth + d)];
-    }
-
-    uint8_t operator()(int x, int y, int d) const
-    {
-        return 0;
-    }
-
-    int width()
-    {
-        return m_width;
-    }
-
-    int height()
-    {
-        return m_height;
-    }
-
-    int depth()
-    {
-        return m_depth;
-    }
-
-private:
-    int m_width;
-    int m_height;
-    int m_depth;
-
-    uint8_t* m_memory;
-};
-
 // #define GLM_FORCE_RADIANS
 // #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 // #include <glm/mat4x4.hpp>
 // #include <glm/vec4.hpp>
-
-#include <array>
-#include <algorithm>
-#include <cstdint>
-#include <iostream>
-#include <optional>
-#include <limits>
-#include <vector>
 
 const bool enableValidationLayer = true;
 
