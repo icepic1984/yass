@@ -459,7 +459,7 @@ int main()
         // Load debug messenger extension and register callbacks for
         // layer validation
         if (enableValidationLayer) {
-            vk::DispatchLoaderDynamic dldi(instance.get());
+            vk::DispatchLoaderDynamic dldi(instance.get(),vkGetInstanceProcAddr);
             std::cout << "Create DebugMessagenger" << std::endl;
             auto messanger = createDebugMessenger(instance, dldi);
         }
